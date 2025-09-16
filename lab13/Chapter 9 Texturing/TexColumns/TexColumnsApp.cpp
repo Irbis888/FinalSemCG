@@ -108,14 +108,15 @@ private:
 	void BuildFrameResources();
 	void CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness);
 	void BuildMaterials();
-	void RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation);
+	void RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation, bool terrain);
 	void BuildCustomMeshGeometry(std::string name, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
 	void BuildRenderItems();
-	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
+	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems, bool height);
 	void DrawDebugGBuffer(ID3D12GraphicsCommandList* cmdList);
 
 	void BeginFrame();
 	void GeometryPass();
+	void GeometryTerrainPass();
 	void LightingPass();
 	void FinalTransitionAndPresent();
 
@@ -136,6 +137,7 @@ private:
 
 	ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
 	ComPtr<ID3D12RootSignature> mGeometryRootSignature = nullptr;
+	ComPtr<ID3D12RootSignature> mTerrainGeometryRootSignature = nullptr;
 	ComPtr<ID3D12RootSignature> mLightingRootSignature = nullptr;
 	ComPtr<ID3D12RootSignature> mDebugRootSignature = nullptr;
 
@@ -153,12 +155,14 @@ private:
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mDebugInputLayout;
+	int mHeightMapHeapIndex;
 
 	// List of all the render items.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
 
 	// Render items divided by PSO.
 	std::vector<RenderItem*> mOpaqueRitems;
+	std::vector<RenderItem*> mTerrainTiles;
 
 	PassConstants mMainPassCB;
 	DirectX::BoundingFrustum mCamFrustum;
@@ -253,25 +257,27 @@ bool TexColumnsApp::Initialize()
 	mRtvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
 
-	mRenderingSystem = std::make_unique<RenderingSystem>(md3dDevice.Get(), mCbvSrvDescriptorSize);
+	//mRenderingSystem = std::make_unique<RenderingSystem>(md3dDevice.Get(), mCbvSrvDescriptorSize);
 	//mRenderingSystem->Initialize(mCommandList.Get());
 
 
 	LoadAllTextures();
 	BuildRootSignature();
-	mRenderingSystem->BuildRootSignature();
-	mRenderingSystem->BuildDescriptorHeaps(mTextures);
+	//mRenderingSystem->BuildRootSignature();
+	//mRenderingSystem->BuildDescriptorHeaps(mTextures);
 	BuildDescriptorHeaps();
 	BuildShapeGeometry(); // свои
 	BuildScreenQuadGeometry();
 	BuildShadersAndInputLayout();
-	mRenderingSystem->BuildShadersAndInputLayout();
+	//mRenderingSystem->BuildShadersAndInputLayout();
 	BuildMaterials();
-	mRenderingSystem->mMaterials = &mMaterials;
+	//mRenderingSystem->mMaterials = &mMaterials;
 	BuildPSOs();
-	mRenderingSystem->BuildPSOs(mBackBufferFormat, mDepthStencilFormat, m4xMsaaState, m4xMsaaQuality);
+	//mRenderingSystem->BuildPSOs(mBackBufferFormat, mDepthStencilFormat, m4xMsaaState, m4xMsaaQuality);
 	BuildRenderItems();
 	BuildFrameResources();
+
+	mHeightMapHeapIndex = TexOffsets["textures/terrain_hm"];
 
 	// Execute the initialization commands.
 	ThrowIfFailed(mCommandList->Close());
@@ -521,8 +527,37 @@ void TexColumnsApp::GeometryPass()
 	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
 
 	// Те же рендер айтемы
-	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+	DrawRenderItems(mCommandList.Get(), mOpaqueRitems, false);
 }
+
+
+
+void TexColumnsApp::GeometryTerrainPass()
+{
+	mCommandList->SetPipelineState(mPSOs["gbufferTerrain"].Get()); // PSO для geometry pass
+
+	// Переход RTV GBuffer в render target state
+	//mGBuffer.TransitionToRenderTarget(mCommandList.Get());
+
+	// Установка рендер-таргетов (GBuffer RTV + Depth)
+	//mCommandList->OMSetRenderTargets(GBuffer::NumTextures, mGBuffer.GetRTVHandles().data(), FALSE, &DepthStencilView());
+
+	// Очистка GBuffer и depth
+	//const float clearColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	//mGBuffer.ClearRenderTargets(mCommandList.Get(), Colors::LightSteelBlue);
+	//mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+	mCommandList->SetGraphicsRootSignature(mTerrainGeometryRootSignature.Get());
+
+	auto passCB = mCurrFrameResource->PassCB->Resource();
+	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+
+	// Те же рендер айтемы
+	DrawRenderItems(mCommandList.Get(), mTerrainTiles, true);
+}
+
+
+
 
 void TexColumnsApp::LightingPass()
 {
@@ -587,6 +622,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 {
 	BeginFrame();
 	GeometryPass();
+	//GeometryTerrainPass();
 	LightingPass();
 	FinalTransitionAndPresent();/**/
 
@@ -927,8 +963,8 @@ void TexColumnsApp::BuildRootSignature()
 	geoTexTable[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1); // t1
 
 	CD3DX12_ROOT_PARAMETER geoParams[5];
-	geoParams[0].InitAsDescriptorTable(1, &geoTexTable[0], D3D12_SHADER_VISIBILITY_PIXEL);
-	geoParams[1].InitAsDescriptorTable(1, &geoTexTable[1], D3D12_SHADER_VISIBILITY_PIXEL);
+	geoParams[0].InitAsDescriptorTable(1, &geoTexTable[0], D3D12_SHADER_VISIBILITY_ALL);
+	geoParams[1].InitAsDescriptorTable(1, &geoTexTable[1], D3D12_SHADER_VISIBILITY_ALL);
 	geoParams[2].InitAsConstantBufferView(0); // b0
 	geoParams[3].InitAsConstantBufferView(1); // b1
 	geoParams[4].InitAsConstantBufferView(2); // b2
@@ -950,13 +986,45 @@ void TexColumnsApp::BuildRootSignature()
 		serializedGeoRootSig->GetBufferSize(),
 		IID_PPV_ARGS(&mGeometryRootSignature)));
 
+	// ==== TERRAIN GEOMETRY ROOT SIGNATURE ====
+
+	CD3DX12_DESCRIPTOR_RANGE tgeoTexTable[3];
+	tgeoTexTable[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0
+	tgeoTexTable[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1); // t1
+	tgeoTexTable[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2); // t2
+
+	CD3DX12_ROOT_PARAMETER tgeoParams[6];
+	tgeoParams[0].InitAsDescriptorTable(1, &tgeoTexTable[0], D3D12_SHADER_VISIBILITY_ALL);
+	tgeoParams[1].InitAsDescriptorTable(1, &tgeoTexTable[1], D3D12_SHADER_VISIBILITY_ALL);
+	tgeoParams[2].InitAsDescriptorTable(1, &tgeoTexTable[2], D3D12_SHADER_VISIBILITY_ALL);
+	tgeoParams[3].InitAsConstantBufferView(0); // b0
+	tgeoParams[4].InitAsConstantBufferView(1); // b1
+	tgeoParams[5].InitAsConstantBufferView(2); // b2
+
+	CD3DX12_ROOT_SIGNATURE_DESC tgeoRootSigDesc(
+		_countof(tgeoParams), tgeoParams,
+		(UINT)staticSamplers.size(), staticSamplers.data(),
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	ComPtr<ID3DBlob> serializedtGeoRootSig = nullptr;
+	errorBlob = nullptr;
+	ThrowIfFailed(D3D12SerializeRootSignature(&tgeoRootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		serializedtGeoRootSig.GetAddressOf(), errorBlob.GetAddressOf()));
+	if (errorBlob) ::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+
+	ThrowIfFailed(md3dDevice->CreateRootSignature(
+		0,
+		serializedtGeoRootSig->GetBufferPointer(),
+		serializedtGeoRootSig->GetBufferSize(),
+		IID_PPV_ARGS(&mTerrainGeometryRootSignature)));
+
 	// ==== LIGHTING ROOT SIGNATURE ====
 
 	CD3DX12_DESCRIPTOR_RANGE gbufferRange;
 	gbufferRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0); // t0-3
 
 	CD3DX12_ROOT_PARAMETER lightingParams[2];
-	lightingParams[0].InitAsDescriptorTable(1, &gbufferRange, D3D12_SHADER_VISIBILITY_PIXEL);
+	lightingParams[0].InitAsDescriptorTable(1, &gbufferRange, D3D12_SHADER_VISIBILITY_ALL);
 	lightingParams[1].InitAsConstantBufferView(0); // b0 (свет)
 
 	CD3DX12_ROOT_SIGNATURE_DESC lightingRootSigDesc(
@@ -980,7 +1048,7 @@ void TexColumnsApp::BuildRootSignature()
 	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0
 
 	CD3DX12_ROOT_PARAMETER slotRootParameter[1];
-	slotRootParameter[0].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParameter[0].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_ALL);
 
 	CD3DX12_STATIC_SAMPLER_DESC staticSampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 
@@ -1102,6 +1170,7 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 	mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
 
 	mShaders["gbufferVS"] = d3dUtil::CompileShader(L"Shaders\\GeometryPass.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["gbufferVSTerrain"] = d3dUtil::CompileShader(L"Shaders\\GeometryPass.hlsl", nullptr, "VSTerrain", "vs_5_1");
 	mShaders["gbufferPS"] = d3dUtil::CompileShader(L"Shaders\\GeometryPass.hlsl", nullptr, "PS", "ps_5_1");
 	mShaders["fullscreenVS"] = d3dUtil::CompileShader(L"Shaders\\LightingPass.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["lightingPS"] = d3dUtil::CompileShader(L"Shaders\\LightingPass.hlsl", nullptr, "PS", "ps_5_1");
@@ -1394,7 +1463,7 @@ void TexColumnsApp::BuildShapeGeometry()
 	BuildCustomMeshGeometry("Pirate", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 	BuildCustomMeshGeometry("left", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 	BuildCustomMeshGeometry("right", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
-	//BuildCustomMeshGeometry("plane2", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
+	BuildCustomMeshGeometry("plane2", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 	BuildCustomMeshGeometry("diablo3_pose", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 
 
@@ -1493,6 +1562,21 @@ void TexColumnsApp::BuildPSOs()
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&geoPsoDesc, IID_PPV_ARGS(&mPSOs["gbuffer"])));
 
+
+	//
+	// === Geometry Pass Terrain PSO (записывает в G-Buffer с heightmap) ===
+	//
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC TgeoPsoDesc = geoPsoDesc;
+	TgeoPsoDesc.pRootSignature = mTerrainGeometryRootSignature.Get(); // terrain сигнатура
+
+	TgeoPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["gbufferVSTerrain"]->GetBufferPointer()),
+		mShaders["gbufferVSTerrain"]->GetBufferSize()
+	};
+
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&TgeoPsoDesc, IID_PPV_ARGS(&mPSOs["gbufferTerrain"])));
+
 	//
 	// === Lighting Pass PSO (освещение по G-Buffer) ===
 	//
@@ -1587,13 +1671,14 @@ void TexColumnsApp::BuildFrameResources()
 void TexColumnsApp::BuildMaterials()
 {
 	CreateMaterial("NiggaMat", 0, TexOffsets["textures/texture"], TexOffsets["textures/texture_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	//CreateMaterial("NiggaMat", 0, TexOffsets["textures/terrain_hm"], TexOffsets["textures/texture_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("eye", 0, TexOffsets["textures/eye"], TexOffsets["textures/eye_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("map", 0, TexOffsets["textures/HeightMap2"], TexOffsets["textures/HeightMap2_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("map", 0, TexOffsets["textures/terrain_diffuse"], TexOffsets["textures/terrain_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("map2", 0, TexOffsets["textures/HeightMap"], TexOffsets["textures/HeightMap_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("bricks", 0, TexOffsets["textures/bricks"], TexOffsets["textures/bricks_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("diabloMat", 0, TexOffsets["textures/diablo3_pose_diffuse"], TexOffsets["textures/diablo3_pose_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 }
-void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
+void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation, bool terrain = false)
 {
 	for (int i = 0; i < ObjectsMeshCount[meshname]; i++)
 	{
@@ -1617,7 +1702,13 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 		//XMStoreFloat3(&rItem->aabb.Center, XMVector3Transform(XMLoadFloat3(&rItem->aabb.Center), Scale * Rotation * Translation));
 		//XMStoreFloat3(&rItem->aabb.Extents, XMVector3Transform(XMLoadFloat3(&rItem->aabb.Extents), Scale * Rotation * Translation));
 		mAllRitems.push_back(std::move(rItem));
-		mOpaqueRitems.push_back(mAllRitems[mAllRitems.size() - 1].get());
+
+		if (!terrain) {
+			mOpaqueRitems.push_back(mAllRitems[mAllRitems.size() - 1].get());
+		}
+		else {
+			mTerrainTiles.push_back(mAllRitems[mAllRitems.size() - 1].get());
+		}
 	}
 	BuildFrameResources();
 }
@@ -1626,14 +1717,14 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 
 void TexColumnsApp::BuildRenderItems()
 {
-	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
+	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
 	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(10, 3, 0));
 	RenderCustomMesh("abbox", "negr", "bricks", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 15, 0));
 	RenderCustomMesh("diablo3", "diablo3_pose", "diabloMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(15, 5, -9));
 	RenderCustomMesh("eyeL", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	RenderCustomMesh("eyeR", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	//RenderCustomMesh("pirate", "Pirate", "Body_mat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
-	//RenderCustomMesh("plan", "plane2", "map", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,-10,0));
+	RenderCustomMesh("plan", "plane2", "map", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,-10,0), true);
 	//RenderCustomMesh("plan", "plane2", "map2", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,10,0));
 	// All the render items are opaque.
 	for (auto& e : mAllRitems)
@@ -1646,7 +1737,7 @@ void TexColumnsApp::BuildRenderItems()
 	}
 }
 
-void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
+void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems, bool height = false)
 {
 	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
 	UINT matCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
@@ -1655,15 +1746,6 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 	auto matCB = mCurrFrameResource->MaterialCB->Resource();
 
 	cam.UpdateViewMatrix();
-
-	/*DirectX::BoundingFrustum frustum;
-	DirectX::XMMATRIX projMatrix = cam.GetProj(); 
-
-	XMMATRIX view = cam.GetView(); // твоя матрица вида
-	XMMATRIX viewInv = XMMatrixInverse(nullptr, view);
-
-	BoundingFrustum::CreateFromMatrix(frustum, projMatrix);
-	frustum.Transform(frustum, viewInv);*/
 
 	XMMATRIX view = cam.GetView();
 	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
@@ -1678,13 +1760,13 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 
 		XMMATRIX viewToLocal = XMMatrixMultiply(invView, invWorld);
 
-		BoundingFrustum localSpaceFrustum;
+		/*BoundingFrustum localSpaceFrustum;
 		mCamFrustum.Transform(localSpaceFrustum, viewToLocal);
 
 		if (localSpaceFrustum.Contains(ri->aabb) == DISJOINT)
 		{
 			//continue;
-		}
+		}*/
 		cmdList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
 		cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
 		cmdList->IASetPrimitiveTopology(ri->PrimitiveType);
@@ -1692,9 +1774,18 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 		CD3DX12_GPU_DESCRIPTOR_HANDLE diffuseHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		diffuseHandle.Offset(ri->Mat->DiffuseSrvHeapIndex, mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(0, diffuseHandle);
+
 		CD3DX12_GPU_DESCRIPTOR_HANDLE normalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		normalHandle.Offset(ri->Mat->NormalSrvHeapIndex, mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(1, normalHandle);
+
+
+		CD3DX12_GPU_DESCRIPTOR_HANDLE heightHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		heightHandle.Offset(mHeightMapHeapIndex, mCbvSrvDescriptorSize);
+		if (height) {
+			
+			cmdList->SetGraphicsRootDescriptorTable(2, heightHandle);
+		}
 
 		//// Получаем дескриптор для нормальной карты по её оффсету.
 		//CD3DX12_GPU_DESCRIPTOR_HANDLE normalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());

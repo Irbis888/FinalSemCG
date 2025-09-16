@@ -26,6 +26,7 @@ cbuffer cbMaterial : register(b2)
 
 Texture2D gDiffuseMap : register(t0);
 Texture2D gNormalMap : register(t1);
+Texture2D gHeightMap : register(t2);
 
 SamplerState gsamAnisotropicWrap : register(s4);
 
@@ -66,17 +67,51 @@ struct VertexOut
 
 VertexOut VS(VertexIn vin)
 {
-    VertexOut vout;
 
+    VertexOut vout = (VertexOut) 0.0f;
+    
+    float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
+    vout.TexC = mul(texC, gMatTransform).xy;
+    
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
-    vout.PosW = posW.xyz;
+    float height = gDiffuseMap.SampleLevel(gsamAnisotropicWrap, vout.TexC, 0).r;
+    //posW.y += height * 100;
+    vout.PosW = posW;
 
     vout.PosH = mul(posW, gViewProj);
+    
+    
+
     vout.NormalW = mul(vin.NormalL, (float3x3) gWorld);
+    vout.NormalW = float3(0., 1., 0.);
     vout.TangentW = mul(vin.TangentL, (float3x3) gWorld);
 
-    float4 tex = mul(float4(vin.TexC, 0, 1), gTexTransform);
-    vout.TexC = mul(tex, gMatTransform).xy;
+    
+    return vout;
+}
+
+VertexOut VSTerrain(VertexIn vin)
+{
+
+    VertexOut vout = (VertexOut) 0.0f;
+    
+    float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
+    vout.TexC = mul(texC, gMatTransform).xy;
+    
+    float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
+    float height = gHeightMap.SampleLevel(gsamAnisotropicWrap, vout.TexC, 0).r;
+    posW.y += height * 100;
+    vout.PosW = posW;
+
+    vout.PosH = mul(posW, gViewProj);
+    
+    
+
+    vout.NormalW = mul(vin.NormalL, (float3x3) gWorld);
+    vout.NormalW = float3(0., 1., 0.);
+    vout.TangentW = mul(vin.TangentL, (float3x3) gWorld);
+
+    
     return vout;
 }
 

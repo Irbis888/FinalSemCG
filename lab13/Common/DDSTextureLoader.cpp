@@ -2166,16 +2166,21 @@ HRESULT DirectX::CreateDDSTextureFromFile12(_In_ ID3D12Device* device,
 
 	std::unique_ptr<uint8_t[]> ddsData;
 	HRESULT hr = LoadTextureDataFromFile(szFileName, ddsData, &header, &bitData, &bitSize);
+
 	if (FAILED(hr))
 	{
+
 		return hr;
 	}
 
 	hr = CreateTextureFromDDS12(device, cmdList, header,
 		bitData, bitSize, maxsize, false, texture, textureUploadHeap);
 
+    
+
 	if (SUCCEEDED(hr))
 	{
+
 /*
 #if !defined(NO_D3D11_DEBUG_NAME) && ( defined(_DEBUG) || defined(PROFILE) )
 		if (texture != 0 || textureView != 0)
@@ -2221,6 +2226,8 @@ HRESULT DirectX::CreateDDSTextureFromFile12(_In_ ID3D12Device* device,
 		}
 #endif
 */
+
+
 		if (alphaMode)
 			*alphaMode = GetAlphaMode(header);
 	}
