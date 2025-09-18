@@ -103,12 +103,17 @@ private:
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
 	void BuildShapeGeometry();
+	void BuildTerrainGeometry(UINT terrainSize,      // например 1025
+		UINT tileCountX,       // например 8
+		UINT tileCountZ,       // например 8
+		UINT tileResolution);
 	void BuildScreenQuadGeometry();
 	void BuildPSOs();
 	void BuildFrameResources();
 	void CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness);
 	void BuildMaterials();
 	void RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation, bool terrain);
+	void RenderShapeMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation, bool terrain);
 	void BuildCustomMeshGeometry(std::string name, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
 	void BuildRenderItems();
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems, bool height);
@@ -215,6 +220,7 @@ void TexColumnsApp::MoveBackFwd(float step) {
 	XMFLOAT3 newPos;
 	XMVECTOR fwd = cam.GetLook();
 	XMStoreFloat3(&newPos, cam.GetPosition() + fwd * step);
+	std::cout << XMVectorGetZ( cam.GetPosition() ) << std::endl;
 	cam.SetPosition(newPos);
 	cam.UpdateViewMatrix();
 }
@@ -243,7 +249,7 @@ bool TexColumnsApp::Initialize()
 	freopen("CONOUT$", "w", stdout);
 	freopen("CONOUT$", "w", stderr);
 
-	cam.SetPosition(0, 3, 10);
+	cam.SetPosition(0, 30, 10);
 	cam.RotateY(MathHelper::Pi);
 	if (!D3DApp::Initialize())
 		return false;
@@ -257,23 +263,15 @@ bool TexColumnsApp::Initialize()
 	mRtvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
 
-	//mRenderingSystem = std::make_unique<RenderingSystem>(md3dDevice.Get(), mCbvSrvDescriptorSize);
-	//mRenderingSystem->Initialize(mCommandList.Get());
-
-
 	LoadAllTextures();
 	BuildRootSignature();
-	//mRenderingSystem->BuildRootSignature();
-	//mRenderingSystem->BuildDescriptorHeaps(mTextures);
 	BuildDescriptorHeaps();
 	BuildShapeGeometry(); // свои
+	BuildTerrainGeometry(1025, 8, 8, 65);
 	BuildScreenQuadGeometry();
 	BuildShadersAndInputLayout();
-	//mRenderingSystem->BuildShadersAndInputLayout();
 	BuildMaterials();
-	//mRenderingSystem->mMaterials = &mMaterials;
 	BuildPSOs();
-	//mRenderingSystem->BuildPSOs(mBackBufferFormat, mDepthStencilFormat, m4xMsaaState, m4xMsaaQuality);
 	BuildRenderItems();
 	BuildFrameResources();
 
@@ -536,21 +534,12 @@ void TexColumnsApp::GeometryTerrainPass()
 {
 	mCommandList->SetPipelineState(mPSOs["gbufferTerrain"].Get()); // PSO для geometry pass
 
-	// Переход RTV GBuffer в render target state
-	//mGBuffer.TransitionToRenderTarget(mCommandList.Get());
-
-	// Установка рендер-таргетов (GBuffer RTV + Depth)
-	//mCommandList->OMSetRenderTargets(GBuffer::NumTextures, mGBuffer.GetRTVHandles().data(), FALSE, &DepthStencilView());
-
-	// Очистка GBuffer и depth
-	//const float clearColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	//mGBuffer.ClearRenderTargets(mCommandList.Get(), Colors::LightSteelBlue);
-	//mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-
+	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 	mCommandList->SetGraphicsRootSignature(mTerrainGeometryRootSignature.Get());
 
 	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
 
 	// Те же рендер айтемы
 	DrawRenderItems(mCommandList.Get(), mTerrainTiles, true);
@@ -622,7 +611,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 {
 	BeginFrame();
 	GeometryPass();
-	//GeometryTerrainPass();
+	GeometryTerrainPass();
 	LightingPass();
 	FinalTransitionAndPresent();/**/
 
@@ -1500,6 +1489,116 @@ void TexColumnsApp::BuildShapeGeometry()
 	mGeometries[geo->Name] = std::move(geo);
 }
 
+
+void TexColumnsApp::BuildTerrainGeometry(UINT terrainSize,      // например 1025
+	UINT tileCountX,       // например 8
+	UINT tileCountZ,       // например 8
+	UINT tileResolution)   // например 65 (вершины на одну сторону тайла)
+{
+	auto geo = std::make_unique<MeshGeometry>();
+	geo->Name = "terrainGeo";
+
+	std::vector<Vertex> vertices;
+	std::vector<std::uint16_t> indices;
+
+	UINT totalVertsX = tileCountX * (tileResolution - 1) + 1;
+	UINT totalVertsZ = tileCountZ * (tileResolution - 1) + 1;
+
+	// === Сетка всего террейна (вершины) ===
+	vertices.resize(totalVertsX * totalVertsZ);
+
+	float dx = 1.0f; // шаг по X (можешь нормализовать к размеру heightmap)
+	float dz = 1.0f;
+
+	for (UINT z = 0; z < totalVertsZ; ++z)
+	{
+		for (UINT x = 0; x < totalVertsX; ++x)
+		{
+			UINT idx = z * totalVertsX + x;
+			vertices[idx].Pos = XMFLOAT3((float)x * dx, 0.0f, (float)z * dz);
+			vertices[idx].Normal = XMFLOAT3(0, 1, 0);
+			vertices[idx].TexC = XMFLOAT2((float)x / (totalVertsX - 1),
+				(float)z / (totalVertsZ - 1));
+		}
+	}
+	// === Индексы ===
+	for (UINT z = 0; z < totalVertsZ - 1; ++z)
+	{
+		for (UINT x = 0; x < totalVertsX - 1; ++x)
+		{
+			// два треугольника на квад
+			indices.push_back(z * totalVertsX + x);
+			indices.push_back(z * totalVertsX + x + 1);
+			indices.push_back((z + 1) * totalVertsX + x);
+
+			indices.push_back((z + 1) * totalVertsX + x);
+			indices.push_back(z * totalVertsX + x + 1);
+			indices.push_back((z + 1) * totalVertsX + x + 1);
+		}
+	}
+
+	geo->VertexBufferByteSize = (UINT)vertices.size() * sizeof(Vertex);
+	geo->IndexBufferByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
+	geo->VertexByteStride = sizeof(Vertex);
+
+	ThrowIfFailed(D3DCreateBlob(geo->VertexBufferByteSize, &geo->VertexBufferCPU));
+	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), geo->VertexBufferByteSize);
+
+	ThrowIfFailed(D3DCreateBlob(geo->IndexBufferByteSize, &geo->IndexBufferCPU));
+	CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), geo->IndexBufferByteSize);
+
+
+	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(),
+		vertices.data(), geo->VertexBufferByteSize, geo->VertexBufferUploader);
+
+	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(),
+		indices.data(), geo->IndexBufferByteSize, geo->IndexBufferUploader);
+
+	geo->IndexFormat = DXGI_FORMAT_R16_UINT;
+
+	// === Submesh для каждого тайла ===
+	for (UINT tz = 0; tz < tileCountZ; ++tz)
+	{
+		for (UINT tx = 0; tx < tileCountX; ++tx)
+		{
+			std::string name = "tile_" + std::to_string(tx) + "_" + std::to_string(tz);
+
+			std::cout << name << std::endl;
+
+			SubmeshGeometry submesh;
+
+			// размер тайла в индексах
+			UINT vertsPerTileX = tileResolution;
+			UINT vertsPerTileZ = tileResolution;
+			UINT facesPerTile = (vertsPerTileX - 1) * (vertsPerTileZ - 1) * 2;
+
+			submesh.IndexCount = facesPerTile * 3;
+			// !!! Offset считается в зависимости от tx,tz
+			submesh.StartIndexLocation =
+				(tz * (tileResolution - 1) * (totalVertsX - 1) +
+					tx * (tileResolution - 1)) * 6; // грубая формула, надо отладить
+
+			submesh.BaseVertexLocation = 0;
+
+			// Можно добавить BoundingBox для culling
+			submesh.Bounds = BoundingBox(
+				XMFLOAT3((float)tx * (tileResolution - 1) * dx,
+					0.0f,
+					(float)tz * (tileResolution - 1) * dz),
+				XMFLOAT3((float)(tileResolution - 1) * dx * 0.5f,
+					100.0f,
+					(float)(tileResolution - 1) * dz * 0.5f)
+			);
+
+			geo->DrawArgs[name] = submesh;
+		}
+	}
+	
+	mGeometries["terrainGeo"] = std::move(geo);
+}
+
+
+
 void TexColumnsApp::BuildPSOs()
 {
 
@@ -1574,6 +1673,8 @@ void TexColumnsApp::BuildPSOs()
 		reinterpret_cast<BYTE*>(mShaders["gbufferVSTerrain"]->GetBufferPointer()),
 		mShaders["gbufferVSTerrain"]->GetBufferSize()
 	};
+
+	//TgeoPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&TgeoPsoDesc, IID_PPV_ARGS(&mPSOs["gbufferTerrain"])));
 
@@ -1678,12 +1779,40 @@ void TexColumnsApp::BuildMaterials()
 	CreateMaterial("bricks", 0, TexOffsets["textures/bricks"], TexOffsets["textures/bricks_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("diabloMat", 0, TexOffsets["textures/diablo3_pose_diffuse"], TexOffsets["textures/diablo3_pose_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 }
+
+void TexColumnsApp::RenderShapeMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation, bool terrain = false)
+{
+	auto rItem = std::make_unique<RenderItem>();
+	rItem->Name = unique_name;
+	XMStoreFloat4x4(&rItem->TexTransform, XMMatrixScaling(1, 1., 1.));
+	XMStoreFloat4x4(&rItem->World, Scale * Rotation * Translation);
+	rItem->ObjCBIndex = mAllRitems.size();
+	rItem->Geo = mGeometries["terrainGeo"].get();
+	rItem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	std::string matname = materialName;
+	rItem->Mat = mMaterials[matname].get();
+	rItem->IndexCount = rItem->Geo->DrawArgs[meshname].IndexCount;
+	rItem->StartIndexLocation = rItem->Geo->DrawArgs[meshname].StartIndexLocation;
+	rItem->BaseVertexLocation = rItem->Geo->DrawArgs[meshname].BaseVertexLocation;
+	rItem->aabb = rItem->Geo->DrawArgs[meshname].Bounds;
+	mAllRitems.push_back(std::move(rItem));
+
+	if (!terrain) {
+		mOpaqueRitems.push_back(mAllRitems[mAllRitems.size() - 1].get());
+	}
+	else {
+		mTerrainTiles.push_back(mAllRitems[mAllRitems.size() - 1].get());
+	}
+	BuildFrameResources();
+}
+
+
+
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation, bool terrain = false)
 {
 	for (int i = 0; i < ObjectsMeshCount[meshname]; i++)
 	{
 		auto rItem = std::make_unique<RenderItem>();
-		std::string textureFile;
 		rItem->Name = unique_name;
 		XMStoreFloat4x4(&rItem->TexTransform, XMMatrixScaling(1, 1., 1.));
 		XMStoreFloat4x4(&rItem->World, Scale * Rotation * Translation);
@@ -1699,8 +1828,6 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 		rItem->StartIndexLocation = rItem->Geo->MultiDrawArgs[meshname][i].second.StartIndexLocation;
 		rItem->BaseVertexLocation = rItem->Geo->MultiDrawArgs[meshname][i].second.BaseVertexLocation;
 		rItem->aabb = rItem->Geo->MultiDrawArgs[meshname][i].second.Bounds;
-		//XMStoreFloat3(&rItem->aabb.Center, XMVector3Transform(XMLoadFloat3(&rItem->aabb.Center), Scale * Rotation * Translation));
-		//XMStoreFloat3(&rItem->aabb.Extents, XMVector3Transform(XMLoadFloat3(&rItem->aabb.Extents), Scale * Rotation * Translation));
 		mAllRitems.push_back(std::move(rItem));
 
 		if (!terrain) {
@@ -1719,13 +1846,19 @@ void TexColumnsApp::BuildRenderItems()
 {
 	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
 	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(10, 3, 0));
+	
 	RenderCustomMesh("abbox", "negr", "bricks", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 15, 0));
 	RenderCustomMesh("diablo3", "diablo3_pose", "diabloMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(15, 5, -9));
 	RenderCustomMesh("eyeL", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	RenderCustomMesh("eyeR", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	//RenderCustomMesh("pirate", "Pirate", "Body_mat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
-	RenderCustomMesh("plan", "plane2", "map", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,-10,0), true);
-	//RenderCustomMesh("plan", "plane2", "map2", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,10,0));
+	//RenderCustomMesh("plan", "plane2", "map", XMMatrixScaling(10, 3, 10), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,-10,0), true);
+	
+	
+
+	for (auto& e : mGeometries["terrainGeo"]->DrawArgs) {
+		RenderShapeMesh(e.first, e.first, "map", XMMatrixScaling(1, 1, 1), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0, -10, 0));
+	}
 	// All the render items are opaque.
 	for (auto& e : mAllRitems)
 	{
@@ -1794,9 +1927,15 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 
 		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
-
-		cmdList->SetGraphicsRootConstantBufferView(2, objCBAddress);
-		cmdList->SetGraphicsRootConstantBufferView(4, matCBAddress);
+		
+		if (!height) {
+			cmdList->SetGraphicsRootConstantBufferView(2, objCBAddress);
+			cmdList->SetGraphicsRootConstantBufferView(4, matCBAddress);
+		}
+		else {
+			cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);
+			cmdList->SetGraphicsRootConstantBufferView(5, matCBAddress);
+		}
 
 		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
 	}

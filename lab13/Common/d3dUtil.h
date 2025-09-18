@@ -189,6 +189,7 @@ struct MeshGeometry
 	std::unordered_map<std::string, SubmeshGeometry> DrawArgs;
 	std::unordered_map<std::string, std::vector<std::pair<GeometryGenerator::MeshData,SubmeshGeometry>>> MultiDrawArgs;
 
+
     DirectX::BoundingBox aabb;
 
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView()const
