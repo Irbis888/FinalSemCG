@@ -98,9 +98,9 @@ private:
 	float mNearWindowHeight = 0.0f;
 	float mFarWindowHeight = 0.0f;
 
-	float CurSpeed = 0.3f;
-	float BaseSpeed = 0.3f;
-	float MaxSpeed = 0.9f;
+	float CurSpeed = 1.5f;
+	float BaseSpeed = 1.5f;
+	float MaxSpeed = 4.5f;
 	bool mViewDirty = true;
 
 	// Cache View/Proj matrices.

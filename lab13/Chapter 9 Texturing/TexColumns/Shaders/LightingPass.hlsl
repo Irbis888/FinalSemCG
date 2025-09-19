@@ -91,6 +91,10 @@ float4 PS(VertexOut pin) : SV_Target
     float4 finalColor = ambient + light;
     finalColor.a = albedo.a;
 
+    if (roughness > 0.59f)
+    {
+        return float4(0.6902, 0.76863, 0.87059, 1.00);
+    }
     return finalColor;
 
 }
