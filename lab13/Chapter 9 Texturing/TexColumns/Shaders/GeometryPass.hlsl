@@ -97,12 +97,12 @@ VertexOut VSTerrain(VertexIn vin)
     
     float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
     vout.TexC = vin.PosL.xz / 101 + 0.5;
-    vout.TexC /= 8;
+    vout.TexC /= 16;
     
     
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
     float height = gHeightMap.SampleLevel(gsamAnisotropicWrap, vout.TexC, 0).r;
-    posW.y += height * 180 - 90;
+    posW.y += height * 300 - 150;
     vout.PosW = posW;
 
     vout.PosH = mul(posW, gViewProj);

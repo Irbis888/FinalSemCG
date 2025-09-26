@@ -100,6 +100,7 @@ private:
 
 	void LoadAllTextures(); // загрузка из файла
 	void LoadTexture(const std::string& name); // и это тоже
+	void BuildLODs();
 	void BuildRootSignature();
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
@@ -119,6 +120,7 @@ private:
 	void BuildRenderItems();
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems, bool height, bool fc);
 	void DrawDebugGBuffer(ID3D12GraphicsCommandList* cmdList);
+	void GetLOD();
 
 	void BeginFrame();
 	void GeometryPass();
@@ -164,6 +166,9 @@ private:
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mDebugInputLayout;
 	int mHeightMapHeapIndex;
+	XMFLOAT3 center = { -800.f, 100.f, -800.f };
+	std::vector<int> mLODs;
+	int currentLOD = 2;
 
 	// List of all the render items.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
@@ -252,7 +257,7 @@ bool TexColumnsApp::Initialize()
 	freopen("CONOUT$", "w", stdout);
 	freopen("CONOUT$", "w", stderr);
 
-	cam.SetPosition(0, 30, 10);
+	cam.SetPosition(0, 50, -160);
 	cam.RotateY(MathHelper::Pi);
 	if (!D3DApp::Initialize())
 		return false;
@@ -270,13 +275,14 @@ bool TexColumnsApp::Initialize()
 	BuildRootSignature();
 	BuildDescriptorHeaps();
 	BuildShapeGeometry(); // свои
-	BuildTerrainGeometry(1024, 16, 32, 128);
+	BuildTerrainGeometry(1024, 16, 32, 32);
 	BuildScreenQuadGeometry();
 	BuildShadersAndInputLayout();
 	BuildMaterials();
 	BuildPSOs();
 	BuildRenderItems();
 	BuildFrameResources();
+	BuildLODs();
 
 	mHeightMapHeapIndex = TexOffsets["textures/terrain_hm"];
 
@@ -295,10 +301,10 @@ void TexColumnsApp::OnResize()
 	D3DApp::OnResize();
 
 	// The window resized, so update the aspect ratio and recompute the projection matrix.
-	XMMATRIX P = XMMatrixPerspectiveFovLH(0.4f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+	XMMATRIX P = XMMatrixPerspectiveFovLH(0.4f * MathHelper::Pi, AspectRatio(), 1.0f, 5000.0f);
 	XMStoreFloat4x4(&mProj, P);
 
-	cam.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+	cam.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 5000.0f);
 
 	BoundingFrustum::CreateFromMatrix(mCamFrustum, cam.GetProj());
 
@@ -366,7 +372,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 
 
 	UpdateCamera(gt);
-	for (auto& rItem : mAllRitems)
+	/*for (auto& rItem : mAllRitems)
 	{
 		if (rItem->Name == "eyeL")
 		{
@@ -390,7 +396,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 			XMStoreFloat4x4(&rItem->TexTransform, a * XMMatrixTranslation(-0.5, -0.5, 0) * XMMatrixRotationRollPitchYaw(0, 0, gt.DeltaTime() * 3) * XMMatrixTranslation(0.5, 0.5, 0));
 			rItem->NumFramesDirty = gNumFrameResources;
 		}
-	}
+	}*/
 	// Cycle through the circular frame resource array.
 	mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
 	mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
@@ -409,6 +415,8 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateObjectCBs(gt);
 	UpdateMaterialCBs(gt);
 	UpdateMainPassCB(gt);
+	//cam.UpdateViewMatrix();
+	GetLOD();
 
 }
 
@@ -1099,6 +1107,38 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	mGBuffer.Initialize(md3dDevice.Get(), mClientWidth, mClientHeight, rtvHandles, srvHandles);
 
 }
+void TexColumnsApp::BuildLODs()
+{
+	mLODs.push_back(TexOffsets["textures/terrain_hm"]);
+	mLODs.push_back(TexOffsets["textures/terrain_diffuse"]);
+	mLODs.push_back(TexOffsets["textures/terrain_nm"]);
+	mLODs.push_back(TexOffsets["textures/terrain_hm_lod1"]);
+	mLODs.push_back(TexOffsets["textures/terrain_diffuse_lod1"]);
+	mLODs.push_back(TexOffsets["textures/terrain_nm_lod1"]);
+	mLODs.push_back(TexOffsets["textures/terrain_hm_lod2"]);
+	mLODs.push_back(TexOffsets["textures/terrain_diffuse_lod2"]);
+	mLODs.push_back(TexOffsets["textures/terrain_nm_lod2"]);
+}
+
+void TexColumnsApp::GetLOD()
+{
+	XMVECTOR c = XMLoadFloat3(&center);
+	
+	float distsq = sqrt(XMVectorGetX(XMVector3LengthSq(cam.GetPosition() - c)));
+	//std::cout << sqrt(distsq) << std::endl;
+	if (distsq > 2000) {
+		currentLOD = 2;
+	}
+	else if (distsq > 1000) {
+		currentLOD = 1;
+	}
+	else {
+		currentLOD = 0;
+	}
+	mHeightMapHeapIndex = mLODs[currentLOD * 3];
+	mMaterials["map"]->DiffuseSrvHeapIndex = mLODs[currentLOD * 3 + 1];
+	mMaterials["map"]->NormalSrvHeapIndex = mLODs[currentLOD * 3 + 2];
+}
 
 void TexColumnsApp::BuildShadersAndInputLayout()
 {
@@ -1501,8 +1541,8 @@ void TexColumnsApp::BuildTerrainGeometry(UINT terrainSize,
 			// Для фрустум-куллинга: расположение и радиус (приближённо)
 			UINT startX = tx * 100;
 			UINT startZ = tz * 100;
-			float halfSizeX = 175;
-			float halfSizeZ = 175;
+			float halfSizeX = 175*2;
+			float halfSizeZ = 175*2;
 			float centerX = 50 + startX;
 			float centerZ = 50 + startZ;
 
@@ -1611,6 +1651,7 @@ void TexColumnsApp::BuildPSOs()
 	//
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC TgeoPsoDesc = geoPsoDesc;
 	TgeoPsoDesc.pRootSignature = mTerrainGeometryRootSignature.Get(); // terrain сигнатура
+	TgeoPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
 
 	TgeoPsoDesc.VS =
 	{
@@ -1786,7 +1827,7 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 void TexColumnsApp::BuildRenderItems()
 {
 	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
-	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(10, 3, 0));
+	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(center.x, center.y, center.z));
 	
 	RenderCustomMesh("abbox", "negr", "bricks", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 15, 0));
 	RenderCustomMesh("diablo3", "diablo3_pose", "diabloMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(15, 5, -9));
@@ -1853,7 +1894,6 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 		CD3DX12_GPU_DESCRIPTOR_HANDLE heightHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		heightHandle.Offset(mHeightMapHeapIndex, mCbvSrvDescriptorSize);
 		if (height) {
-			
 			cmdList->SetGraphicsRootDescriptorTable(2, heightHandle);
 		}
 
