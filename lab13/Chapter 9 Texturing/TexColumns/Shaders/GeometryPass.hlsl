@@ -14,6 +14,15 @@ cbuffer cbPass : register(b1)
     float4x4 gProj;
     float4x4 gInvProj;
     float4x4 gViewProj;
+    float4x4 gInvViewProj;
+    float3 gEyePosW;
+    float gPadding1;
+    float2 gRenderTargetSize;
+    float2 gInvRenderTargetSize;
+    float gNearZ;
+    float gFarZ;
+    //float2 gPadding2;
+    float gTotalTime;
 };
 
 cbuffer cbMaterial : register(b2)
@@ -96,7 +105,7 @@ VertexOut VSTerrain(VertexIn vin)
     VertexOut vout = (VertexOut) 0.0f;
     
     float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
-    vout.TexC = vin.PosL.xz / 101 + 0.5;
+    vout.TexC = vin.PosL.xz / 101 + 0.5 + gTotalTime/2;
     vout.TexC /= 16;
     
     
