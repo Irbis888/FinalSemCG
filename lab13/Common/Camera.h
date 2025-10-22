@@ -99,7 +99,7 @@ private:
 	float mFarWindowHeight = 0.0f;
 
 	float CurSpeed = 1.5f;
-	float BaseSpeed = 1.5f;
+	float BaseSpeed = 0.5f;
 	float MaxSpeed = 4.5f;
 	bool mViewDirty = true;
 

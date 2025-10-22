@@ -51,6 +51,9 @@
     <ClCompile Include="RenderingSystem.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="HistoryBuffer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\Common\d3dApp.h">
@@ -89,6 +92,9 @@
     <ClInclude Include="RenderingSystem.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="HistoryBuffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Text Include="Shaders\Default.hlsl" />
@@ -96,5 +102,6 @@
     <Text Include="Shaders\GeometryPass.hlsl" />
     <Text Include="Shaders\LightingPass.hlsl" />
     <Text Include="Shaders\Debug.hlsl" />
+    <Text Include="Shaders\ResolvePass.hlsl" />
   </ItemGroup>
 </Project>

@@ -39,6 +39,27 @@ Texture2D gHeightMap : register(t2);
 
 SamplerState gsamAnisotropicWrap : register(s4);
 
+float Halton(uint i, uint base)
+{
+    float invBase = 1.0f / base;
+    float denom = 1.0f;
+    float result = 0.0f;
+
+    while (i > 0)
+    {
+        denom *= invBase;
+        result += (i % base) * denom;
+        i /= base;
+    }
+    return result;
+}
+
+// Generates a 2D Halton sequence point
+float2 GenerateJitter(uint index)
+{
+    return float2(Halton(index, 2), Halton(index, 3));
+}
+
 float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, float3 tangentW)
 {
 	// Uncompress each component from [0,1] to [-1,1].
@@ -84,10 +105,14 @@ VertexOut VS(VertexIn vin)
     
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
     float height = gDiffuseMap.SampleLevel(gsamAnisotropicWrap, vout.TexC, 0).r;
+    
 
     vout.PosW = posW;
 
     vout.PosH = mul(posW, gViewProj);
+    float2 jitter = GenerateJitter(floor((gTotalTime * 60.) + 50) % 100);
+    float2 jitterNDC = jitter * 2.0 / gRenderTargetSize;
+    vout.PosH.xy += jitterNDC * vout.PosH.w;
     
     
 
@@ -105,7 +130,7 @@ VertexOut VSTerrain(VertexIn vin)
     VertexOut vout = (VertexOut) 0.0f;
     
     float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
-    vout.TexC = vin.PosL.xz / 101 + 0.5 + gTotalTime/2;
+    vout.TexC = vin.PosL.xz / 101 + 0.5;
     vout.TexC /= 16;
     
     
