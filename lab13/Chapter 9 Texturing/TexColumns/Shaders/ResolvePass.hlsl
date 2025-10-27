@@ -1,9 +1,9 @@
 #include "LightingUtil.hlsl"
 
 
-Texture2D gHistory : register(t4);
-Texture2D gCurrent : register(t5);
-Texture2D gVelocity : register(t6);
+Texture2D gHistory : register(t0);
+Texture2D gCurrent : register(t1);
+Texture2D gVelocity : register(t2);
 
 
 SamplerState gsamLinearClamp : register(s3);
@@ -34,10 +34,11 @@ PSOutput PS(VertexOut pin)
 {
     float4 currentColor = gCurrent.Load(int3(pin.PosH.xyz));
     float4 historyColor = gHistory.Load(int3(pin.PosH.xyz));
+    float3 velocity = gVelocity.Load(int3(pin.PosH.xyz));
     float alpha = 0.1;
     float4 finalColor = alpha * currentColor + (1.0 - alpha) * historyColor;
     PSOutput output;
-    output.RT0 = finalColor;
+    output.RT0 = finalColor + velocity.rrrr*0.005;
     output.RT1 = finalColor;
     return output;
 }

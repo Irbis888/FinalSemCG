@@ -4,15 +4,18 @@ void HistoryBuffer::Initialize(ID3D12Device* device, UINT width, UINT height,
     D3D12_CPU_DESCRIPTOR_HANDLE* rtvHandles,
     D3D12_CPU_DESCRIPTOR_HANDLE* srvHandles)
 {
-    CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, History, rtvHandles[0], srvHandles[0]);
-    HistoryRTV = rtvHandles[0];
-    HistorySRV = srvHandles[0];
+    CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, HistoryA, rtvHandles[0], srvHandles[0]);
+    HistoryARTV = rtvHandles[0];
+    HistoryASRV = srvHandles[0];
+    CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, HistoryB, rtvHandles[0], srvHandles[0]);
+    HistoryBRTV = rtvHandles[1];
+    HistoryBSRV = srvHandles[1];
     CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, Current, rtvHandles[1], srvHandles[1]);
-    CurrentRTV = rtvHandles[1];
-    CurrentSRV = srvHandles[1];
+    CurrentRTV = rtvHandles[2];
+    CurrentSRV = srvHandles[2];
     CreateRenderTarget(device, width, height, DXGI_FORMAT_R32G32B32A32_FLOAT, Velocity, rtvHandles[2], srvHandles[2]);
-    VelocityRTV = rtvHandles[2];
-    VelocitySRV = srvHandles[2];
+    VelocityRTV = rtvHandles[3];
+    VelocitySRV = srvHandles[3];
 }
 
 void HistoryBuffer::CreateRenderTarget(ID3D12Device* device, UINT width, UINT height,
@@ -70,7 +73,8 @@ void HistoryBuffer::CreateRenderTarget(ID3D12Device* device, UINT width, UINT he
 void HistoryBuffer::TransitionToRenderTarget(ID3D12GraphicsCommandList* cmdList)
 {
     D3D12_RESOURCE_BARRIER barriers[] = {
-        CD3DX12_RESOURCE_BARRIER::Transition(History.Get(),    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+        CD3DX12_RESOURCE_BARRIER::Transition(HistoryA.Get(),    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+        CD3DX12_RESOURCE_BARRIER::Transition(HistoryB.Get(),    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         CD3DX12_RESOURCE_BARRIER::Transition(Current.Get(),    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         CD3DX12_RESOURCE_BARRIER::Transition(Velocity.Get(),  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
     };
@@ -80,7 +84,8 @@ void HistoryBuffer::TransitionToRenderTarget(ID3D12GraphicsCommandList* cmdList)
 void HistoryBuffer::TransitionToShaderResource(ID3D12GraphicsCommandList* cmdList)
 {
     D3D12_RESOURCE_BARRIER barriers[] = {
-        CD3DX12_RESOURCE_BARRIER::Transition(History.Get(),    D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        CD3DX12_RESOURCE_BARRIER::Transition(HistoryA.Get(),    D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        CD3DX12_RESOURCE_BARRIER::Transition(HistoryB.Get(),    D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(Current.Get(),    D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(Velocity.Get(),  D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
     };
@@ -90,7 +95,8 @@ void HistoryBuffer::TransitionToShaderResource(ID3D12GraphicsCommandList* cmdLis
 void HistoryBuffer::SetRenderTargets(ID3D12GraphicsCommandList* cmdList, D3D12_CPU_DESCRIPTOR_HANDLE dsv)
 {
     D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] = {
-        HistoryRTV,
+        HistoryARTV,
+        HistoryBRTV,
         CurrentRTV,
         VelocityRTV,
     };
@@ -99,12 +105,13 @@ void HistoryBuffer::SetRenderTargets(ID3D12GraphicsCommandList* cmdList, D3D12_C
 }
 std::array<D3D12_CPU_DESCRIPTOR_HANDLE, HistoryBuffer::NumTextures> HistoryBuffer::GetRTVHandles() const
 {
-    return { HistoryRTV, CurrentRTV, VelocityRTV };
+    return { HistoryARTV, HistoryBRTV, CurrentRTV, VelocityRTV };
 }
 
 void HistoryBuffer::ClearRenderTargets(ID3D12GraphicsCommandList* cmdList, const float clearColor[4])
 {
-    cmdList->ClearRenderTargetView(HistoryRTV, clearColor, 0, nullptr);
+    cmdList->ClearRenderTargetView(HistoryARTV, clearColor, 0, nullptr);
+    cmdList->ClearRenderTargetView(HistoryBRTV, clearColor, 0, nullptr);
     cmdList->ClearRenderTargetView(CurrentRTV, clearColor, 0, nullptr);
     cmdList->ClearRenderTargetView(VelocityRTV, clearColor, 0, nullptr);
 }

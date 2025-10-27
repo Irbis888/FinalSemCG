@@ -569,7 +569,7 @@ void TexColumnsApp::LightingPass()
 	// Переход GBuffer SRV и BackBuffer в RTV
 	mGBuffer.TransitionToShaderResource(mCommandList.Get());
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-		mHistoryBuffer.Current.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+		mHistoryBuffer.Current.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
 	mCommandList->OMSetRenderTargets(1, &mHistoryBuffer.CurrentRTV, TRUE, nullptr);
 
@@ -600,11 +600,32 @@ void TexColumnsApp::LightingPass()
 void TexColumnsApp::ResolvePass()
 {
 	// Переход GBuffer SRV и BackBuffer в RTV
-	mHistoryBuffer.TransitionToShaderResource(mCommandList.Get());
+	//mHistoryBuffer.TransitionToShaderResource(mCommandList.Get());
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
 		CurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
-	std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 2> renderTargets = { mHistoryBuffer.HistoryRTV, CurrentBackBufferView() };
+	if (mHistoryBuffer.HistoryARead) {
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mHistoryBuffer.HistoryA.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mHistoryBuffer.HistoryB.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+	}
+	else {
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mHistoryBuffer.HistoryB.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mHistoryBuffer.HistoryA.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+	}
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+		mHistoryBuffer.Current.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+		mHistoryBuffer.Velocity.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+
+	std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 2> renderTargets = { mHistoryBuffer.HistoryARTV , CurrentBackBufferView() };
+	if (mHistoryBuffer.HistoryARead) {
+		renderTargets[0] = mHistoryBuffer.HistoryBRTV;
+	}
+	
 	mCommandList->OMSetRenderTargets(2, renderTargets.data(), TRUE, nullptr);
 
 	// Очистка backbuffer (по желанию)
@@ -616,18 +637,26 @@ void TexColumnsApp::ResolvePass()
 	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
 	mCommandList->SetDescriptorHeaps(1, descriptorHeaps);
 
-	auto srvTableHandle = mHistoryBuffer.GetSRVTable(mSrvDescriptorHeap.Get(), mCbvSrvDescriptorSize);
-	mCommandList->SetGraphicsRootDescriptorTable(0, srvTableHandle);
 
-	// Передаём passCB
-	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+	CD3DX12_GPU_DESCRIPTOR_HANDLE historyHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	historyHandle.Offset((mHistoryBuffer.HistoryARead ? 4 : 5) + mHistoryBuffer.SrvHeapStartIndex, mCbvSrvDescriptorSize);
+	mCommandList->SetGraphicsRootDescriptorTable(0, historyHandle);
+
+	CD3DX12_GPU_DESCRIPTOR_HANDLE currentHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	currentHandle.Offset(6+ mHistoryBuffer.SrvHeapStartIndex, mCbvSrvDescriptorSize);
+	mCommandList->SetGraphicsRootDescriptorTable(1, currentHandle);
+
+	CD3DX12_GPU_DESCRIPTOR_HANDLE velocityHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	velocityHandle.Offset(7 + mHistoryBuffer.SrvHeapStartIndex, mCbvSrvDescriptorSize);
+	mCommandList->SetGraphicsRootDescriptorTable(2, velocityHandle);
 
 	// Рисуем полноэкранный треугольник
 	mCommandList->IASetVertexBuffers(0, 0, nullptr);
 	mCommandList->IASetIndexBuffer(nullptr);
 	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	mCommandList->DrawInstanced(3, 1, 0, 0);
+	mHistoryBuffer.HistoryARead = !mHistoryBuffer.HistoryARead;
+
 
 }
 
@@ -662,7 +691,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	GeometryPass();
 	GeometryTerrainPass();
 	LightingPass();
-	ResolvePass();
+	//ResolvePass();
 	FinalTransitionAndPresent();
 }
 
@@ -1060,15 +1089,22 @@ void TexColumnsApp::BuildRootSignature()
 
 	// ==== RESOLVE ROOT SIGNATURE ====
 
-	CD3DX12_DESCRIPTOR_RANGE HistoryRange;
-	HistoryRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0); // t0-5
+	CD3DX12_DESCRIPTOR_RANGE historyRange;
+	historyRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0
 
-	CD3DX12_ROOT_PARAMETER ResolveParams[1];
-	ResolveParams[0].InitAsDescriptorTable(1, &HistoryRange, D3D12_SHADER_VISIBILITY_ALL);
-	//lightingParams[1].InitAsConstantBufferView(0); // b0 (свет)
+	CD3DX12_DESCRIPTOR_RANGE currentRange;
+	currentRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1); // t1
+
+	CD3DX12_DESCRIPTOR_RANGE velocityRange;
+	velocityRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2); // t2
+
+	CD3DX12_ROOT_PARAMETER rootParams[3];
+	rootParams[0].InitAsDescriptorTable(1, &historyRange, D3D12_SHADER_VISIBILITY_ALL);
+	rootParams[1].InitAsDescriptorTable(1, &currentRange, D3D12_SHADER_VISIBILITY_ALL);
+	rootParams[2].InitAsDescriptorTable(1, &velocityRange, D3D12_SHADER_VISIBILITY_ALL);
 
 	CD3DX12_ROOT_SIGNATURE_DESC ResolveRootSigDesc(
-		_countof(ResolveParams), ResolveParams,
+		_countof(rootParams), rootParams,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_NONE);
 
@@ -1104,7 +1140,7 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	//
 	UINT numTextureSRVs = static_cast<UINT>(mTextures.size());
 	UINT numGBufferSRVs = 4; // albedo, normal, world pos, roughness
-	UINT numHistorySRVs = 3; // history, current, velocity
+	UINT numHistorySRVs = 4; // history, current, velocity
 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
 	srvHeapDesc.NumDescriptors = numTextureSRVs + numGBufferSRVs + numHistorySRVs;
@@ -1157,8 +1193,8 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(mRtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 	CD3DX12_CPU_DESCRIPTOR_HANDLE gbufferSrvHandle(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), offset, srvDescriptorSize);
 
-	D3D12_CPU_DESCRIPTOR_HANDLE histSrvHandles[3];
-	D3D12_CPU_DESCRIPTOR_HANDLE histRtvHandles[3];
+	D3D12_CPU_DESCRIPTOR_HANDLE histSrvHandles[4];
+	D3D12_CPU_DESCRIPTOR_HANDLE histRtvHandles[4];
 
 	
 
@@ -1171,7 +1207,7 @@ void TexColumnsApp::BuildDescriptorHeaps()
 		gbufferSrvHandle.Offset(1, srvDescriptorSize);
 	}
 
-	for (int i = 0; i < 3; ++i) {
+	for (int i = 0; i < 4; ++i) {
 		histRtvHandles[i] = rtvHandle;
 		rtvHandle.Offset(1, rtvDescriptorSize);
 

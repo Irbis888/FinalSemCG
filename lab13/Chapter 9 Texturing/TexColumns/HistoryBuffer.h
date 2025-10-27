@@ -9,24 +9,28 @@ using Microsoft::WRL::ComPtr;
 class HistoryBuffer
 {
 public:
-    static constexpr int NumTextures = 3; // Прошлый кадр, текущий кадр, скорость
+    static constexpr int NumTextures = 4; // Прошлый кадр, текущий кадр, скорость
 
     // G-Buffer текстуры
-    ComPtr<ID3D12Resource> History = nullptr;
+    ComPtr<ID3D12Resource> HistoryA = nullptr;
+    ComPtr<ID3D12Resource> HistoryB = nullptr;
     ComPtr<ID3D12Resource> Current = nullptr;
     ComPtr<ID3D12Resource> Velocity = nullptr;
 
     // RTV дескрипторы
-    D3D12_CPU_DESCRIPTOR_HANDLE HistoryRTV;
+    D3D12_CPU_DESCRIPTOR_HANDLE HistoryARTV;
+    D3D12_CPU_DESCRIPTOR_HANDLE HistoryBRTV;
     D3D12_CPU_DESCRIPTOR_HANDLE CurrentRTV;
     D3D12_CPU_DESCRIPTOR_HANDLE VelocityRTV;
 
     // SRV дескрипторы
-    D3D12_CPU_DESCRIPTOR_HANDLE HistorySRV;
+    D3D12_CPU_DESCRIPTOR_HANDLE HistoryASRV;
+    D3D12_CPU_DESCRIPTOR_HANDLE HistoryBSRV;
     D3D12_CPU_DESCRIPTOR_HANDLE CurrentSRV;
     D3D12_CPU_DESCRIPTOR_HANDLE VelocitySRV;
 
     UINT SrvHeapStartIndex = 0;
+    bool HistoryARead = false;
 
     // Инициализация всех ресурсов
     void Initialize(ID3D12Device* device, UINT width, UINT height,
