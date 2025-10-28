@@ -26,7 +26,7 @@ VertexOut VS(uint vid : SV_VertexID)
 struct PSOutput
 {
     float4 RT0 : SV_Target0;
-    float4 RT1 : SV_Target1;
+    //float4 RT1 : SV_Target1;
 };
 
 
@@ -38,7 +38,7 @@ PSOutput PS(VertexOut pin)
     float alpha = 0.1;
     float4 finalColor = alpha * currentColor + (1.0 - alpha) * historyColor;
     PSOutput output;
-    output.RT0 = finalColor + velocity.rrrr*0.005;
-    output.RT1 = finalColor;
+    output.RT0 = finalColor;
+    //output.RT1 = finalColor;
     return output;
 }

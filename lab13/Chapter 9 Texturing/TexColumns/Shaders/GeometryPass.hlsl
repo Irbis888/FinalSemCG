@@ -140,6 +140,9 @@ VertexOut VSTerrain(VertexIn vin)
     vout.PosW = posW;
 
     vout.PosH = mul(posW, gViewProj);
+    float2 jitter = GenerateJitter(floor((gTotalTime * 60.) + 50) % 100);
+    float2 jitterNDC = jitter * 2.0 / gRenderTargetSize;
+    vout.PosH.xy += jitterNDC * vout.PosH.w;
     
     
 

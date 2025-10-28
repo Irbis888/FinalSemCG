@@ -376,22 +376,22 @@ void TexColumnsApp::Update(const GameTimer& gt)
 
 
 	UpdateCamera(gt);
-	/*for (auto& rItem : mAllRitems)
+	for (auto& rItem : mAllRitems)
 	{
 		if (rItem->Name == "eyeL")
 		{
 
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0.63, 0.9, -1.1) * XMMatrixTranslation(0, 3, 0) * worldHead);
+			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0.63, 0.9, -1.1) * XMMatrixTranslation(0, 20, 0) * worldHead);
 			rItem->NumFramesDirty = gNumFrameResources;
 		}
 		if (rItem->Name == "eyeR")
 		{
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(-0.63, 0.9, -1.1) * XMMatrixTranslation(0, 3, 0) * worldHead);
+			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(-0.63, 0.9, -1.1) * XMMatrixTranslation(0, 20, 0) * worldHead);
 			rItem->NumFramesDirty = gNumFrameResources;
 		}
 		if (rItem->Name == "nigga")
 		{
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0, 3, 0) * worldHead);
+			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0, 20, 0) * worldHead);
 			rItem->NumFramesDirty = gNumFrameResources;
 		}
 		if (rItem->Name == "box")
@@ -400,7 +400,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 			XMStoreFloat4x4(&rItem->TexTransform, a * XMMatrixTranslation(-0.5, -0.5, 0) * XMMatrixRotationRollPitchYaw(0, 0, gt.DeltaTime() * 3) * XMMatrixTranslation(0.5, 0.5, 0));
 			rItem->NumFramesDirty = gNumFrameResources;
 		}
-	}*/
+	}
 	// Cycle through the circular frame resource array.
 	mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
 	mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
@@ -621,15 +621,14 @@ void TexColumnsApp::ResolvePass()
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
 		mHistoryBuffer.Velocity.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
-	std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 2> renderTargets = { mHistoryBuffer.HistoryARTV , CurrentBackBufferView() };
-	if (mHistoryBuffer.HistoryARead) {
-		renderTargets[0] = mHistoryBuffer.HistoryBRTV;
-	}
-	
-	mCommandList->OMSetRenderTargets(2, renderTargets.data(), TRUE, nullptr);
+	/*std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 2> renderTargets = {CurrentBackBufferView(), mHistoryBuffer.HistoryARTV};
+	if (mHistoryBuffer.HistoryARead) { renderTargets[1] = mHistoryBuffer.HistoryBRTV; }*/
+
+
+	mCommandList->OMSetRenderTargets(1, mHistoryBuffer.HistoryARead ? &mHistoryBuffer.HistoryBRTV : &mHistoryBuffer.HistoryARTV, TRUE, nullptr);
 
 	// Очистка backbuffer (по желанию)
-	//mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DeepSkyBlue, 0, nullptr);
+	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DeepSkyBlue, 0, nullptr);
 
 	mCommandList->SetPipelineState(mPSOs["resolve"].Get());
 	mCommandList->SetGraphicsRootSignature(mResolveRootSignature.Get());
@@ -650,12 +649,17 @@ void TexColumnsApp::ResolvePass()
 	velocityHandle.Offset(7 + mHistoryBuffer.SrvHeapStartIndex, mCbvSrvDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(2, velocityHandle);
 
+	mHistoryBuffer.HistoryARead = !mHistoryBuffer.HistoryARead;
 	// Рисуем полноэкранный треугольник
 	mCommandList->IASetVertexBuffers(0, 0, nullptr);
 	mCommandList->IASetIndexBuffer(nullptr);
 	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	mCommandList->DrawInstanced(3, 1, 0, 0);
-	mHistoryBuffer.HistoryARead = !mHistoryBuffer.HistoryARead;
+
+
+	mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), TRUE, nullptr);
+	mCommandList->DrawInstanced(3, 1, 0, 0);
+
 
 
 }
@@ -691,7 +695,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	GeometryPass();
 	GeometryTerrainPass();
 	LightingPass();
-	//ResolvePass();
+	ResolvePass();
 	FinalTransitionAndPresent();
 }
 
@@ -1870,9 +1874,9 @@ void TexColumnsApp::BuildPSOs()
 
 	resolvePsoDesc.InputLayout = { nullptr, 0 }; // fullscreen quad не требует входных данных
 	resolvePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	resolvePsoDesc.NumRenderTargets = 2;
+	resolvePsoDesc.NumRenderTargets = 1;
 	resolvePsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-	resolvePsoDesc.RTVFormats[1] = mBackBufferFormat;
+	//resolvePsoDesc.RTVFormats[1] = mBackBufferFormat;
 	resolvePsoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN; // нет глубины
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&resolvePsoDesc, IID_PPV_ARGS(&mPSOs["resolve"])));
@@ -1971,11 +1975,11 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 
 void TexColumnsApp::BuildRenderItems()
 {
-	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(center.x, center.y, center.z));
-	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(center.x, center.y, center.z));
+	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 10, 0));
+	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	
-	RenderCustomMesh("abbox", "negr", "bricks", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 15, 0));
-	RenderCustomMesh("diablo3", "diablo3_pose", "diabloMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(15, 5, -9));
+	RenderCustomMesh("abbox", "negr", "bricks", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 40, 0));
+	RenderCustomMesh("diablo3", "diablo3_pose", "diabloMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(15, 20, -9));
 	RenderCustomMesh("eyeL", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	RenderCustomMesh("eyeR", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	//RenderCustomMesh("pirate", "Pirate", "Body_mat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
@@ -1986,7 +1990,6 @@ void TexColumnsApp::BuildRenderItems()
 	for (auto& e : mGeometries["terrainGeo"]->DrawArgs) {
 		
 		RenderShapeMesh(e.first, e.first, "map", XMMatrixScaling(1, 1, 1), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0, -10, 0), true);
-		
 	}
 
 }
