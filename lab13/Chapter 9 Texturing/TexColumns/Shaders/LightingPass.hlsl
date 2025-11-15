@@ -21,6 +21,7 @@ cbuffer cbPass : register(b0)
     float4x4 gProj;
     float4x4 gInvProj;
     float4x4 gViewProj;
+    float4x4 gPrevViewProj;
     float4x4 gInvViewProj;
     float3 gEyePosW;
     float gPadding1;
@@ -28,10 +29,11 @@ cbuffer cbPass : register(b0)
     float2 gInvRenderTargetSize;
     float gNearZ;
     float gFarZ;
-    //float2 gPadding2;
     float gTotalTime;
     float gDeltaTime;
-    //float2 gPadding3;
+    float2 gJitter;
+    float2 Padding2;
+    float4x4 gViewProjRaw;
     float4 gAmbientLight;
     Light gLights[MaxLights];
 
@@ -43,7 +45,7 @@ Texture2D gWorldPos : register(t2);
 Texture2D gRoughness : register(t3);
 
 
-SamplerState gsamLinearClamp : register(s3);
+SamplerState gsamLinearClamp : register(s5);
 
 struct VertexOut
 {
@@ -96,5 +98,6 @@ float4 PS(VertexOut pin) : SV_Target
         return float4(0.6902, 0.76863, 0.87059, 1.00);
     }
     return finalColor;
+    //return albedo;
 
 }

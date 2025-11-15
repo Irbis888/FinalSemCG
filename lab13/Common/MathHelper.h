@@ -13,6 +13,21 @@
 class MathHelper
 {
 public:
+
+	static float Halton(int index, int base)
+	{
+		float f = 1.0f;
+		float r = 0.0f;
+		while (index > 0)
+		{
+			f /= base;
+			r += f * (index % base);
+			index /= base;
+		}
+		return r;
+	}
+
+
 	// Returns random float in [0, 1).
 	static float RandF()
 	{

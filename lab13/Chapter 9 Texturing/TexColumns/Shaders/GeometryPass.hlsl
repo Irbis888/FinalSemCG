@@ -14,6 +14,7 @@ cbuffer cbPass : register(b1)
     float4x4 gProj;
     float4x4 gInvProj;
     float4x4 gViewProj;
+    float4x4 gPrevViewProj;
     float4x4 gInvViewProj;
     float3 gEyePosW;
     float gPadding1;
@@ -21,8 +22,11 @@ cbuffer cbPass : register(b1)
     float2 gInvRenderTargetSize;
     float gNearZ;
     float gFarZ;
-    //float2 gPadding2;
     float gTotalTime;
+    float gDeltaTime;
+    float2 gJitter;
+    float2 gPadding2;
+    float4x4 gViewProjRaw;
 };
 
 cbuffer cbMaterial : register(b2)
@@ -37,28 +41,9 @@ Texture2D gDiffuseMap : register(t0);
 Texture2D gNormalMap : register(t1);
 Texture2D gHeightMap : register(t2);
 
-SamplerState gsamAnisotropicWrap : register(s4);
+SamplerState gsamAnisotropicWrap : register(s0);
 
-float Halton(uint i, uint base)
-{
-    float invBase = 1.0f / base;
-    float denom = 1.0f;
-    float result = 0.0f;
 
-    while (i > 0)
-    {
-        denom *= invBase;
-        result += (i % base) * denom;
-        i /= base;
-    }
-    return result;
-}
-
-// Generates a 2D Halton sequence point
-float2 GenerateJitter(uint index)
-{
-    return float2(Halton(index, 2), Halton(index, 3));
-}
 
 float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, float3 tangentW)
 {
@@ -110,7 +95,8 @@ VertexOut VS(VertexIn vin)
     vout.PosW = posW;
 
     vout.PosH = mul(posW, gViewProj);
-    float2 jitter = GenerateJitter(floor((gTotalTime * 60.) + 50) % 100);
+    //float2 jitter = GenerateJitter(floor((gTotalTime * 60.) + 50) % 100);
+    float2 jitter = gJitter*0;
     float2 jitterNDC = jitter * 2.0 / gRenderTargetSize;
     vout.PosH.xy += jitterNDC * vout.PosH.w;
     
@@ -140,10 +126,7 @@ VertexOut VSTerrain(VertexIn vin)
     vout.PosW = posW;
 
     vout.PosH = mul(posW, gViewProj);
-    float2 jitter = GenerateJitter(floor((gTotalTime * 60.) + 50) % 100);
-    float2 jitterNDC = jitter * 2.0 / gRenderTargetSize;
-    vout.PosH.xy += jitterNDC * vout.PosH.w;
-    
+   
     
 
     vout.NormalW = mul(vin.NormalL, (float3x3) gWorld);
@@ -160,6 +143,7 @@ struct GBufferOutput
     float4 Normal : SV_Target1;
     float4 WorldPos : SV_Target2;
     float Roughness : SV_Target3;
+    float2 Velocity : SV_Target4;
 };
 
 GBufferOutput PS(VertexOut pin)
@@ -168,14 +152,28 @@ GBufferOutput PS(VertexOut pin)
 
     float4 texColor = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC);
     output.Albedo = texColor * gDiffuseAlbedo;
+    //output.Albedo = float4(pin.TexC, 0, 0);
 
     float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
     float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample, normalize(pin.NormalW), pin.TangentW);
     output.Normal = float4(normalize(bumpedNormalW), 1.0f);
+    //output.Albedo = float4(normalize(bumpedNormalW), 1.0f);
 
     output.WorldPos = float4(pin.PosW, 1.0f);
 
     output.Roughness = gRoughness;
+    
+    float4 posH = mul(float4(pin.PosW, 1.0f), gViewProjRaw);
+    float4 prevPosH = mul(float4(pin.PosW, 1.0f), gPrevViewProj);
+    
+    float2 currNDC = (posH.xy / posH.w) ;
+    float2 prevNDC = (prevPosH.xy / prevPosH.w);
 
+    // Скорость в NDC
+    float2 velocity = currNDC - prevNDC;
+    velocity = velocity * float2(0.5, -0.5);
+    
+    output.Velocity = velocity;
+    
     return output;
 }

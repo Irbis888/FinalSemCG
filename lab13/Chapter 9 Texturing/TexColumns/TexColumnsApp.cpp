@@ -122,6 +122,7 @@ private:
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems, bool height, bool fc);
 	void DrawDebugGBuffer(ID3D12GraphicsCommandList* cmdList);
 	void GetLOD();
+	XMFLOAT2 GenerateJitter(int frame);
 
 	void BeginFrame();
 	void GeometryPass();
@@ -173,6 +174,7 @@ private:
 	XMFLOAT3 center = { -800.f, 100.f, -800.f };
 	std::vector<int> mLODs;
 	int currentLOD = 2;
+	int currentFrameNum = 0;
 
 	// List of all the render items.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
@@ -381,17 +383,17 @@ void TexColumnsApp::Update(const GameTimer& gt)
 		if (rItem->Name == "eyeL")
 		{
 
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0.63, 0.9, -1.1) * XMMatrixTranslation(0, 20, 0) * worldHead);
+			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0.63, 0.9, -1.1) * XMMatrixTranslation(cosf(gt.TotalTime() * 3), 20, sinf(gt.TotalTime() * 3)) * worldHead);
 			rItem->NumFramesDirty = gNumFrameResources;
 		}
 		if (rItem->Name == "eyeR")
 		{
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(-0.63, 0.9, -1.1) * XMMatrixTranslation(0, 20, 0) * worldHead);
+			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(-0.63, 0.9, -1.1) * XMMatrixTranslation(cosf(gt.TotalTime() * 3), 20, sinf(gt.TotalTime() * 3)) * worldHead);
 			rItem->NumFramesDirty = gNumFrameResources;
 		}
 		if (rItem->Name == "nigga")
 		{
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0, 20, 0) * worldHead);
+			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(cosf(gt.TotalTime() * 3), 20, sinf(gt.TotalTime() * 3)) * worldHead);
 			rItem->NumFramesDirty = gNumFrameResources;
 		}
 		if (rItem->Name == "box")
@@ -399,6 +401,11 @@ void TexColumnsApp::Update(const GameTimer& gt)
 			XMMATRIX a = XMLoadFloat4x4(&rItem->TexTransform);
 			XMStoreFloat4x4(&rItem->TexTransform, a * XMMatrixTranslation(-0.5, -0.5, 0) * XMMatrixRotationRollPitchYaw(0, 0, gt.DeltaTime() * 3) * XMMatrixTranslation(0.5, 0.5, 0));
 			rItem->NumFramesDirty = gNumFrameResources;
+		}
+		if (rItem->Name == "abbox")
+		{
+			//XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(cosf(gt.TotalTime()*3), 40, sinf(gt.TotalTime()*3)) * worldHead);
+			//rItem->NumFramesDirty = gNumFrameResources;
 		}
 	}
 	// Cycle through the circular frame resource array.
@@ -422,6 +429,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	//cam.UpdateViewMatrix();
 	GetLOD();
 
+	currentFrameNum++;
 }
 
 void TexColumnsApp::BuildScreenQuadGeometry()
@@ -521,16 +529,24 @@ void TexColumnsApp::BeginFrame()
 void TexColumnsApp::GeometryPass()
 {
 	mCommandList->SetPipelineState(mPSOs["gbuffer"].Get()); // PSO для geometry pass
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+		mHistoryBuffer.Velocity.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
 
 	// Переход RTV GBuffer в render target state
 	mGBuffer.TransitionToRenderTarget(mCommandList.Get());
 
+	std::array<D3D12_CPU_DESCRIPTOR_HANDLE, GBuffer::NumTextures + 1> renderTargets = {
+		mGBuffer.AlbedoRTV, mGBuffer.NormalRTV, mGBuffer.WorldPosRTV, mGBuffer.RoughnessRTV, mHistoryBuffer.VelocityRTV
+	};
+
 	// Установка рендер-таргетов (GBuffer RTV + Depth)
-	mCommandList->OMSetRenderTargets(GBuffer::NumTextures, mGBuffer.GetRTVHandles().data(), FALSE, &DepthStencilView());
+	mCommandList->OMSetRenderTargets(GBuffer::NumTextures+1, renderTargets.data(), FALSE, &DepthStencilView());
 
 	// Очистка GBuffer и depth
 	//const float clearColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	mGBuffer.ClearRenderTargets(mCommandList.Get(), Colors::LightSteelBlue);
+	mCommandList->ClearRenderTargetView(mHistoryBuffer.VelocityRTV, Colors::Black, 0, nullptr);
 	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
 	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
@@ -603,6 +619,7 @@ void TexColumnsApp::ResolvePass()
 	//mHistoryBuffer.TransitionToShaderResource(mCommandList.Get());
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
 		CurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
 
 	if (mHistoryBuffer.HistoryARead) {
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
@@ -865,12 +882,30 @@ void TexColumnsApp::UpdateMaterialCBs(const GameTimer& gt)
 		}
 	}
 }
+XMFLOAT2 TexColumnsApp::GenerateJitter(int frame)
+{
+
+	float jitterX = MathHelper::Halton(frame & 1023, 2) - 0.5f;
+	float jitterY = MathHelper::Halton(frame & 1023, 3) - 0.5f;
+	//std::cout << jitterX << " " << jitterY << "\n jitter";
+	return XMFLOAT2(jitterX, jitterY);
+
+}
 
 void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 {
+
+	XMFLOAT2 jitter = GenerateJitter(currentFrameNum);
+	//XMFLOAT2 jitter = {0,0};
 	XMMATRIX view = XMLoadFloat4x4(&mView);
 	XMMATRIX proj = XMLoadFloat4x4(&mProj);
+	XMMATRIX jitteredProj = XMMatrixMultiply(proj, XMMatrixTranslationFromVector({2*jitter.x / mClientWidth, 2*jitter.y / mClientHeight, 0}));
+	XMMATRIX viewProjRaw = XMMatrixMultiply(view, proj);
+	//XMMATRIX jitteredProj = XMMatrixMultiply(XMMatrixTranslationFromVector({2*jitter.x / mClientWidth, 2*jitter.y / mClientHeight, 0}), proj);
+	//XMMATRIX jitteredProj = XMMatrixMultiply(XMMatrixTranslationFromVector({jitter.x, jitter.y, 0}), proj);
+	proj = jitteredProj;
 
+	XMMATRIX prevViewProj = XMLoadFloat4x4(&mMainPassCB.ViewProjRaw);
 	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
 	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
 	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(proj), proj);
@@ -881,6 +916,8 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	XMStoreFloat4x4(&mMainPassCB.Proj, XMMatrixTranspose(proj));
 	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
 	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
+	XMStoreFloat4x4(&mMainPassCB.PrevViewProj, prevViewProj);
+	XMStoreFloat4x4(&mMainPassCB.PrevViewProj, prevViewProj);
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
 	mMainPassCB.EyePosW = mEyePos;
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
@@ -889,6 +926,9 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.FarZ = 1000.0f;
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
+	mMainPassCB.Jitter = jitter;
+	XMStoreFloat4x4(&mMainPassCB.ViewProjRaw, XMMatrixTranspose(viewProjRaw));
+
 	mMainPassCB.AmbientLight = {0.4f, 0.4f, 0.5f, 1.0f};
 	mMainPassCB.Lights[0].Position = { 10.0f, 15.0f, 20.0f };
 	mMainPassCB.Lights[0].Strength = { 0.7, 0.7, 0.7 };
@@ -902,6 +942,7 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.Lights[2].Position = { 0.0f, 5.0f, -9.0f };
 	mMainPassCB.Lights[2].Strength = { 0, 0.9, 0 };
 	mMainPassCB.Lights[2].FalloffEnd = 40.f;
+
 
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
@@ -1760,11 +1801,12 @@ void TexColumnsApp::BuildPSOs()
 		mShaders["gbufferPS"]->GetBufferSize()
 	};
 
-	geoPsoDesc.NumRenderTargets = GBuffer::NumTextures;
+	geoPsoDesc.NumRenderTargets = GBuffer::NumTextures+1;
 	geoPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;     // Albedo
 	geoPsoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT; // Normal
 	geoPsoDesc.RTVFormats[2] = DXGI_FORMAT_R32G32B32A32_FLOAT; // WorldPos
 	geoPsoDesc.RTVFormats[3] = DXGI_FORMAT_R8_UNORM;           // Roughness
+	geoPsoDesc.RTVFormats[4] = DXGI_FORMAT_R32G32_FLOAT; // Velocity
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&geoPsoDesc, IID_PPV_ARGS(&mPSOs["gbuffer"])));
 
@@ -1975,7 +2017,7 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 
 void TexColumnsApp::BuildRenderItems()
 {
-	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 10, 0));
+	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 120, 0));
 	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	
 	RenderCustomMesh("abbox", "negr", "bricks", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 40, 0));

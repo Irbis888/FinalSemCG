@@ -7,13 +7,13 @@ void HistoryBuffer::Initialize(ID3D12Device* device, UINT width, UINT height,
     CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, HistoryA, rtvHandles[0], srvHandles[0]);
     HistoryARTV = rtvHandles[0];
     HistoryASRV = srvHandles[0];
-    CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, HistoryB, rtvHandles[0], srvHandles[0]);
+    CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, HistoryB, rtvHandles[1], srvHandles[1]);
     HistoryBRTV = rtvHandles[1];
     HistoryBSRV = srvHandles[1];
-    CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, Current, rtvHandles[1], srvHandles[1]);
+    CreateRenderTarget(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, Current, rtvHandles[2], srvHandles[2]);
     CurrentRTV = rtvHandles[2];
     CurrentSRV = srvHandles[2];
-    CreateRenderTarget(device, width, height, DXGI_FORMAT_R32G32B32A32_FLOAT, Velocity, rtvHandles[2], srvHandles[2]);
+    CreateRenderTarget(device, width, height, DXGI_FORMAT_R32G32_FLOAT, Velocity, rtvHandles[3], srvHandles[3]);
     VelocityRTV = rtvHandles[3];
     VelocitySRV = srvHandles[3];
 }

@@ -12,12 +12,13 @@ struct ObjectConstants
 };
 
 struct PassConstants
-{
+{   // тут вообще можно половину под нож
     DirectX::XMFLOAT4X4 View = MathHelper::Identity4x4();
     DirectX::XMFLOAT4X4 InvView = MathHelper::Identity4x4();
     DirectX::XMFLOAT4X4 Proj = MathHelper::Identity4x4();
     DirectX::XMFLOAT4X4 InvProj = MathHelper::Identity4x4();
-    DirectX::XMFLOAT4X4 ViewProj = MathHelper::Identity4x4();
+    DirectX::XMFLOAT4X4 ViewProj = MathHelper::Identity4x4(); //jittered
+    DirectX::XMFLOAT4X4 PrevViewProj = MathHelper::Identity4x4();
     DirectX::XMFLOAT4X4 InvViewProj = MathHelper::Identity4x4();
     DirectX::XMFLOAT3 EyePosW = { 0.0f, 0.0f, 0.0f };
     float cbPerObjectPad1 = 0.0f;
@@ -27,6 +28,10 @@ struct PassConstants
     float FarZ = 0.0f;
     float TotalTime = 0.0f;
     float DeltaTime = 0.0f;
+
+    DirectX::XMFLOAT2 Jitter = {0.0f, 0.0f};
+    DirectX::XMFLOAT2 cbPerObjectPad2 = { 0.0f, 0.0f };
+    DirectX::XMFLOAT4X4 ViewProjRaw = MathHelper::Identity4x4(); //Unjittered
 
     DirectX::XMFLOAT4 AmbientLight = { 0.0f, 0.0f, 0.0f, 1.0f };
 
