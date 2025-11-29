@@ -1,4 +1,5 @@
 #include "LightingUtil.hlsl"
+#define InverseLuminance false
 
 
 Texture2D gHistory : register(t0);
@@ -27,13 +28,18 @@ VertexOut VS(uint vid : SV_VertexID)
 struct PSOutput
 {
     float4 RT0 : SV_Target0;
-    //float4 RT1 : SV_Target1;
 };
 
-float4 AdjustHDRColor(float4 color)
+float4 AdjustHDRColor (float4 color)
 {
-    //log
-    return float4(color.rgb > 0.0 ? log(color.rgb) : -10.0, 1.0);
+    if (InverseLuminance)
+    {
+        float luminance = dot(color.rgb, float3(0.299, 0.587, 0.114));
+        float luminanceWeight = 1.0 / (1.0 + luminance);
+        return float4(color.rgb, 1.0) * luminanceWeight;
+    }
+    else //log
+    return float4(color.rgb > 0.0 ? log(color.rgb) : -100.0, 1.0);
 }
 
 
@@ -49,7 +55,7 @@ PSOutput PS(VertexOut pin)
     PSOutput output;
 
     // Текущий пиксель и история
-    float4 currentColor = gCurrent.Load(int3(pin.PosH.xy, 0));
+    float4 currentColor = AdjustHDRColor(gCurrent.Load(int3(pin.PosH.xy, 0)));
 
     // Берём смещение из velocity (в пикселях)
     float2 velocity = gVelocity.Load(int3(pin.PosH.xy, 0)).xy;
@@ -62,7 +68,7 @@ PSOutput PS(VertexOut pin)
     // Приводим к integer для Load
     int2 historyPix = int2(historyUV);
 
-    float4 historyColor = gHistory.Sample(gsamPointClamp, historyUV);
+    float4 historyColor = AdjustHDRColor(gHistory.Sample(gsamPointClamp, historyUV));
     float4 minColor = currentColor;
     float4 maxColor = minColor;
 
@@ -71,7 +77,7 @@ PSOutput PS(VertexOut pin)
             for (int j = -1; j <= 1; j++)
             {
                 //float4 color = gCurrent.Sample(gsamPointClamp, uv + 3*float2(i, j) / size);
-                float4 color = gCurrent.Load(int3(pin.PosH.xy, 0) + int3(i, j, 0));
+            float4 color = AdjustHDRColor(gCurrent.Load(int3(pin.PosH.xy, 0) + int3(i, j, 0)));
                 minColor = min(minColor, color);
                 maxColor = max(maxColor, color);
 
@@ -88,9 +94,16 @@ PSOutput PS(VertexOut pin)
     
     
     
-    //float4 blendedColor = ClampedColor * weightHistory + currentColor * weightCurr;
-    float4 blendedColor = ClampedColor * 0.9 + currentColor * 0.1;
-    
+    float4 blendedColor = ClampedColor * weightHistory + currentColor * weightCurr;
+    blendedColor /= weightHistory + weightCurr;
+    //float4 blendedColor = ClampedColor * 0.9 + currentColor * 0.1;
     output.RT0 = blendedColor;
+    
+    if (!InverseLuminance)
+    {
+        output.RT0 = float4(exp(output.RT0.rgb), blendedColor.a);
+    }
+    //output.RT0 = float4(weightHistory, weightCurr, 0, 0);
     return output;
+    
 }

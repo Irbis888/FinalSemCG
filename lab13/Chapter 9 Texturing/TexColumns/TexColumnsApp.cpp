@@ -128,6 +128,7 @@ private:
 	void GeometryPass();
 	void GeometryTerrainPass();
 	void LightingPass();
+	void PostProcessPass();
 	void ResolvePass();
 	void FinalTransitionAndPresent();
 
@@ -181,6 +182,7 @@ private:
 
 	// Render items divided by PSO.
 	std::vector<RenderItem*> mOpaqueRitems;
+	std::vector<RenderItem*> mTransparentRitems;
 	std::vector<RenderItem*> mTerrainTiles;
 
 	PassConstants mMainPassCB;
@@ -195,6 +197,7 @@ private:
 	float mRadius = 15.0f;
 
 	POINT mLastMousePos;
+	bool mWriteStencil;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -531,6 +534,7 @@ void TexColumnsApp::GeometryPass()
 	mCommandList->SetPipelineState(mPSOs["gbuffer"].Get()); // PSO для geometry pass
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
 		mHistoryBuffer.Velocity.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+	mWriteStencil = true;
 
 
 	// Переход RTV GBuffer в render target state
@@ -610,6 +614,26 @@ void TexColumnsApp::LightingPass()
 	mCommandList->IASetIndexBuffer(nullptr);
 	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	mCommandList->DrawInstanced(3, 1, 0, 0);
+
+}
+
+void TexColumnsApp::PostProcessPass()
+{
+	mCommandList->SetGraphicsRootSignature(mGeometryRootSignature.Get());
+	mCommandList->SetPipelineState(mPSOs["transparent"].Get());
+	mWriteStencil = false;
+	mCommandList->OMSetRenderTargets(1, &mHistoryBuffer.CurrentRTV, TRUE, &DepthStencilView());
+
+
+	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+	
+	auto passCB = mCurrFrameResource->PassCB->Resource();
+	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+
+
+
+	DrawRenderItems(mCommandList.Get(), mTransparentRitems, false, false);
 
 }
 
@@ -696,6 +720,8 @@ void TexColumnsApp::FinalTransitionAndPresent()
 	ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
 	mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
 
+
+
 	// SwapChain Present
 	ThrowIfFailed(mSwapChain->Present(1, 0));
 	mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
@@ -712,6 +738,8 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	GeometryPass();
 	GeometryTerrainPass();
 	LightingPass();
+	PostProcessPass();
+
 	ResolvePass();
 	FinalTransitionAndPresent();
 }
@@ -932,7 +960,8 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.AmbientLight = {0.4f, 0.4f, 0.5f, 1.0f};
 	mMainPassCB.Lights[0].Position = { 10.0f, 15.0f, 20.0f };
 	mMainPassCB.Lights[0].Strength = { 0.7, 0.7, 0.7 };
-	mMainPassCB.Lights[0].Direction = { 0, -0.5f, -2.f };
+	//mMainPassCB.Lights[0].Direction = { -2.f * sinf(gt.TotalTime()), -0.5 , -2.f*cosf(gt.TotalTime()) };
+	mMainPassCB.Lights[0].Direction = { -2.f , -0.5 , -2.f };
 	mMainPassCB.Lights[0].FalloffEnd = 100.f;
 
 	mMainPassCB.Lights[1].Position = { 0.0f, 10.0f, 0.0f };
@@ -1304,8 +1333,11 @@ void TexColumnsApp::GetLOD()
 void TexColumnsApp::BuildShadersAndInputLayout()
 {
 
-	mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
-	mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
+	//mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
+	//mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
+
+	mShaders["transparentVS"] = d3dUtil::CompileShader(L"Shaders\\TransparentUnlit.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["transparentPS"] = d3dUtil::CompileShader(L"Shaders\\TransparentUnlit.hlsl", nullptr, "PS", "ps_5_1");
 
 	mShaders["gbufferVS"] = d3dUtil::CompileShader(L"Shaders\\GeometryPass.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["gbufferVSTerrain"] = d3dUtil::CompileShader(L"Shaders\\GeometryPass.hlsl", nullptr, "VSTerrain", "vs_5_1");
@@ -1760,7 +1792,7 @@ void TexColumnsApp::BuildPSOs()
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaquePsoDesc = {};
 	opaquePsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
 	opaquePsoDesc.pRootSignature = mRootSignature.Get(); // старая сигнатура
-	opaquePsoDesc.VS =
+	/*opaquePsoDesc.VS =
 	{
 		reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()),
 		mShaders["standardVS"]->GetBufferSize()
@@ -1769,7 +1801,7 @@ void TexColumnsApp::BuildPSOs()
 	{
 		reinterpret_cast<BYTE*>(mShaders["opaquePS"]->GetBufferPointer()),
 		mShaders["opaquePS"]->GetBufferSize()
-	};
+	};*/
 	opaquePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	opaquePsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
 	opaquePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
@@ -1782,7 +1814,72 @@ void TexColumnsApp::BuildPSOs()
 	opaquePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	opaquePsoDesc.DSVFormat = mDepthStencilFormat;
 
-	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
+	//ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
+
+	//
+	// === Transparent PSO ===
+	//
+
+	// === Transparent PSO ===
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentPsoDesc = {};
+	transparentPsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
+	transparentPsoDesc.pRootSignature = mGeometryRootSignature.Get();
+	transparentPsoDesc.VS = {
+		reinterpret_cast<BYTE*>(mShaders["transparentVS"]->GetBufferPointer()),
+		mShaders["transparentVS"]->GetBufferSize()
+	};
+	transparentPsoDesc.PS = {
+		reinterpret_cast<BYTE*>(mShaders["transparentPS"]->GetBufferPointer()),
+		mShaders["transparentPS"]->GetBufferSize()
+	};
+
+	// Rasterizer
+	transparentPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	transparentPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	// Blend State
+	transparentPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	transparentPsoDesc.BlendState.AlphaToCoverageEnable = FALSE;
+	transparentPsoDesc.BlendState.IndependentBlendEnable = FALSE;
+	transparentPsoDesc.BlendState.RenderTarget[0].BlendEnable = TRUE;
+	transparentPsoDesc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+	transparentPsoDesc.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+	transparentPsoDesc.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+	transparentPsoDesc.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+	transparentPsoDesc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+	transparentPsoDesc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	transparentPsoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	// Depth Stencil для прозрачного (ghost) PSO
+	transparentPsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	transparentPsoDesc.DepthStencilState.DepthEnable = TRUE;
+	transparentPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // не пишем глубину
+	transparentPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;     // игнорируем текущую глубину
+
+	transparentPsoDesc.DepthStencilState.StencilEnable = TRUE;
+	transparentPsoDesc.DepthStencilState.StencilReadMask = 0x01;
+	transparentPsoDesc.DepthStencilState.StencilWriteMask = 0x00; // не пишем в stencil
+
+	transparentPsoDesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_NOT_EQUAL;
+	transparentPsoDesc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+	transparentPsoDesc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	transparentPsoDesc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+
+
+	transparentPsoDesc.DepthStencilState.BackFace = transparentPsoDesc.DepthStencilState.FrontFace;
+
+	// Остальное...
+	transparentPsoDesc.SampleMask = UINT_MAX;
+	transparentPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	transparentPsoDesc.NumRenderTargets = 1;
+	transparentPsoDesc.RTVFormats[0] = mBackBufferFormat;
+	transparentPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
+	transparentPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
+	transparentPsoDesc.DSVFormat = mDepthStencilFormat; // Используйте ваш формат глубины
+
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&transparentPsoDesc, IID_PPV_ARGS(&mPSOs["transparent"])));
+
+
 
 	//
 	// === Geometry Pass PSO (записывает в G-Buffer) ===
@@ -1807,6 +1904,19 @@ void TexColumnsApp::BuildPSOs()
 	geoPsoDesc.RTVFormats[2] = DXGI_FORMAT_R32G32B32A32_FLOAT; // WorldPos
 	geoPsoDesc.RTVFormats[3] = DXGI_FORMAT_R8_UNORM;           // Roughness
 	geoPsoDesc.RTVFormats[4] = DXGI_FORMAT_R32G32_FLOAT; // Velocity
+
+	D3D12_DEPTH_STENCIL_DESC normalDs = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	normalDs.StencilEnable = TRUE;
+
+	normalDs.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	normalDs.FrontFace.StencilPassOp = D3D12_STENCIL_OP_REPLACE;
+
+	normalDs.BackFace = normalDs.FrontFace;
+
+	normalDs.StencilReadMask = 0xFF;
+	normalDs.StencilWriteMask = 0xFF;
+
+	geoPsoDesc.DepthStencilState = normalDs;
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&geoPsoDesc, IID_PPV_ARGS(&mPSOs["gbuffer"])));
 
@@ -1853,19 +1963,7 @@ void TexColumnsApp::BuildPSOs()
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&lightPsoDesc, IID_PPV_ARGS(&mPSOs["lighting"])));
 
-	//
-	// === Transparent PSO (оставляем старую логику) ===
-	//
-	D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentPSO = opaquePsoDesc;
 
-	transparentPSO.BlendState.RenderTarget[0].BlendEnable = TRUE;
-	transparentPSO.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
-	transparentPSO.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-	transparentPSO.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
-
-	transparentPSO.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-
-	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&transparentPSO, IID_PPV_ARGS(&mPSOs["transparent"])));
 	//
 	// == Debug PSO ==
 	//
@@ -2004,7 +2102,12 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 		mAllRitems.push_back(std::move(rItem));
 
 		if (!terrain) {
+			if (meshname == "diablo3_pose")
+			{
+				mTransparentRitems.push_back(mAllRitems[mAllRitems.size() - 1].get());
+			}
 			mOpaqueRitems.push_back(mAllRitems[mAllRitems.size() - 1].get());
+			
 		}
 		else {
 			mTerrainTiles.push_back(mAllRitems[mAllRitems.size() - 1].get());
@@ -2021,7 +2124,7 @@ void TexColumnsApp::BuildRenderItems()
 	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	
 	RenderCustomMesh("abbox", "negr", "bricks", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 40, 0));
-	RenderCustomMesh("diablo3", "diablo3_pose", "diabloMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(15, 20, -9));
+	RenderCustomMesh("diablo3", "diablo3_pose", "diabloMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(30, 127, 0));
 	RenderCustomMesh("eyeL", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	RenderCustomMesh("eyeR", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	//RenderCustomMesh("pirate", "Pirate", "Body_mat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
@@ -2054,11 +2157,13 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 	BoundingFrustum worldFrustum;
 	mCamFrustum.Transform(worldFrustum, invView);
 
-
+	//std::cout << mWriteStencil << std::endl;
 	// For each render item...
 	for (size_t i = 0; i < ritems.size(); ++i)
 	{
+		
 		auto ri = ritems[i];
+		//std::cout << ri->Name << "\n";
 		BoundingBox localBox = ri->aabb;     
 		BoundingBox worldBox;
 		localBox.Transform(worldBox, XMLoadFloat4x4(&ri->World));
@@ -2068,6 +2173,13 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 			continue;
 		}
 
+		if (ri->Name == "diablo3") {
+			cmdList->OMSetStencilRef(1);
+			//std::cout << mWriteStencil << std::endl;
+		}
+		else {
+			cmdList->OMSetStencilRef(0);
+		}
 		cmdList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
 		cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
 		cmdList->IASetPrimitiveTopology(ri->PrimitiveType);

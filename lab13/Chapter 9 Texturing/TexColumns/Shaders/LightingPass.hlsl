@@ -98,6 +98,6 @@ float4 PS(VertexOut pin) : SV_Target
         return float4(0.6902, 0.76863, 0.87059, 1.00);
     }
     return finalColor;
-    //return albedo;
+    //return float4(normal, 1);
 
 }

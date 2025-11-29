@@ -103,5 +103,6 @@
     <Text Include="Shaders\LightingPass.hlsl" />
     <Text Include="Shaders\Debug.hlsl" />
     <Text Include="Shaders\ResolvePass.hlsl" />
+    <Text Include="Shaders\TransparentUnlit.hlsl" />
   </ItemGroup>
 </Project>

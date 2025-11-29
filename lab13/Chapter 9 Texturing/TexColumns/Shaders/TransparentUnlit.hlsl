@@ -41,7 +41,7 @@ Texture2D gDiffuseMap : register(t0);
 Texture2D gNormalMap : register(t1);
 Texture2D gHeightMap : register(t2);
 
-SamplerState gsamAnisotropicWrap : register(s4);
+SamplerState gsamAnisotropicWrap : register(s0);
 
 
 
@@ -89,87 +89,39 @@ VertexOut VS(VertexIn vin)
     vout.TexC = mul(texC, gMatTransform).xy;
     
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
-    float height = gDiffuseMap.SampleLevel(gsamAnisotropicWrap, vout.TexC, 0).r;
-    
+    //float height = gDiffuseMap.SampleLevel(gsamAnisotropicWrap, vout.TexC, 0).r;       
 
+    
     vout.PosW = posW;
+    vout.PosH.y += 100;
 
     vout.PosH = mul(posW, gViewProj);
+    //float2 jitter = GenerateJitter(floor((gTotalTime * 60.) + 50) % 100);
+    float2 jitter = gJitter*0;
+    float2 jitterNDC = jitter * 2.0 / gRenderTargetSize;
+    vout.PosH.xy += jitterNDC * vout.PosH.w;
+    
     
 
     vout.NormalW = mul(vin.NormalL, (float3x3) gWorld);
-    //vout.NormalW = float3(0., 1., 0.);
-    
+    vout.NormalW = float3(0., 1., 0.);
     vout.TangentW = mul(vin.TangentL, (float3x3) gWorld);
 
     
     return vout;
 }
 
-VertexOut VSTerrain(VertexIn vin)
-{
 
-    VertexOut vout = (VertexOut) 0.0f;
-    
-    float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
-    vout.TexC = vin.PosL.xz / 101 + 0.5;
-    vout.TexC /= 16;
-    
-    
-    float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
-    float height = gHeightMap.SampleLevel(gsamAnisotropicWrap, vout.TexC, 0).r;
-    posW.y += height * 300 - 150;
-    vout.PosW = posW;
-
-    vout.PosH = mul(posW, gViewProj);
-   
-    
-
-    vout.NormalW = mul(vin.NormalL, (float3x3) gWorld);
-    //vout.NormalW = float3(0., 1., 0.);
-    vout.TangentW = mul(vin.TangentL, (float3x3) gWorld);
-
-    
-    return vout;
-}
-
-struct GBufferOutput
+/*struct GBufferOutput
 {
     float4 Albedo : SV_Target0;
     float4 Normal : SV_Target1;
     float4 WorldPos : SV_Target2;
     float Roughness : SV_Target3;
     float2 Velocity : SV_Target4;
-};
+};*/
 
-GBufferOutput PS(VertexOut pin)
+float4 PS(VertexOut pin) : SV_Target
 {
-    GBufferOutput output;
-
-    float4 texColor = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC);
-    output.Albedo = texColor * gDiffuseAlbedo;
-    //output.Albedo = float4(pin.TexC, 0, 0);
-
-    float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
-    float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample, normalize(pin.NormalW), pin.TangentW);
-    output.Normal = float4(normalize(bumpedNormalW), 1.0f);
-    //output.Albedo = float4(normalize(bumpedNormalW), 1.0f);
-
-    output.WorldPos = float4(pin.PosW, 1.0f);
-
-    output.Roughness = gRoughness;
-    
-    float4 posH = mul(float4(pin.PosW, 1.0f), gViewProjRaw);
-    float4 prevPosH = mul(float4(pin.PosW, 1.0f), gPrevViewProj);
-    
-    float2 currNDC = (posH.xy / posH.w) ;
-    float2 prevNDC = (prevPosH.xy / prevPosH.w);
-
-    // Скорость в NDC
-    float2 velocity = currNDC - prevNDC;
-    velocity = velocity * float2(0.5, -0.5);
-    
-    output.Velocity = velocity;
-    
-    return output;
+    return float4(0.9, 0.2, 0.7, 0.5);
 }
