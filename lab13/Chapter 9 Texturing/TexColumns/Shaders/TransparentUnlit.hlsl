@@ -123,5 +123,5 @@ VertexOut VS(VertexIn vin)
 
 float4 PS(VertexOut pin) : SV_Target
 {
-    return float4(0.9, 0.2, 0.7, 0.5);
+    return float4(0.9, 0.2, 0.7, 0.2);
 }
