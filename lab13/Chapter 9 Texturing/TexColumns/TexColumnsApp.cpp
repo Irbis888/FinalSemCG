@@ -10,6 +10,7 @@
 #include "FrameResource.h"
 #include "RenderingSystem.h"
 #include "GBuffer.h"
+#include "CustomBuffer.h"
 #include "HistoryBuffer.h"
 #include <iostream>
 
@@ -164,8 +165,11 @@ private:
 	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> mPSOs;
 
 	std::unique_ptr<MeshGeometry> mScreenQuadGeo = nullptr;
+	std::unordered_map<std::string, std::unique_ptr<CustomBuffer>> mBuffers;
+
 	GBuffer mGBuffer;
 	HistoryBuffer mHistoryBuffer;
+
 	BoundingFrustum frustum;
 	BoundingFrustum worldFrustum;
 
@@ -278,6 +282,9 @@ bool TexColumnsApp::Initialize()
 	// so we have to query this information.
 	mCbvSrvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	mRtvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+	mBuffers["gbuffer"] = std::make_unique<CustomBuffer>(4);
+	mBuffers["history"] = std::make_unique<CustomBuffer>(4);
 
 
 	LoadAllTextures();
@@ -1213,8 +1220,8 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	// 1. Создаём SRV хип с учётом GBuffer
 	//
 	UINT numTextureSRVs = static_cast<UINT>(mTextures.size());
-	UINT numGBufferSRVs = 4; // albedo, normal, world pos, roughness
-	UINT numHistorySRVs = 4; // history, current, velocity
+	UINT numGBufferSRVs = mBuffers["gbuffer"]->NumTextures; // albedo, normal, world pos, roughness
+	UINT numHistorySRVs = mBuffers["history"]->NumTextures; // history, current, velocity
 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
 	srvHeapDesc.NumDescriptors = numTextureSRVs + numGBufferSRVs + numHistorySRVs;
@@ -1226,7 +1233,7 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	// 2. Создаём RTV хип под GBuffer
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-	rtvHeapDesc.NumDescriptors = 4 + numHistorySRVs;
+	rtvHeapDesc.NumDescriptors = numGBufferSRVs + numHistorySRVs;
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&mRtvDescriptorHeap)));
@@ -1252,7 +1259,9 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	}
 
 	mGBuffer.SrvHeapStartIndex = offset;
+	//offset += numGBufferSRVs;
 	mHistoryBuffer.SrvHeapStartIndex = offset;
+	//offset += numHistorySRVs;
 
 	//
 	// 4. Создаём дескрипторы для GBuffer
