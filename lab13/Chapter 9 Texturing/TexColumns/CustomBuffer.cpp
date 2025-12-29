@@ -1,4 +1,5 @@
 #include "CustomBuffer.h"
+#include <string>
 
 
 CustomBuffer::CustomBuffer(UINT NumTextures) {
@@ -14,8 +15,12 @@ void CustomBuffer::Initialize(ID3D12Device* device, UINT width, UINT height,
     for (int i = 0; i < this->NumTextures; i++) {
         Textures.push_back(nullptr);
         CreateRenderTarget(device, width, height, formats[i], Textures[i], rtvHandles[i], srvHandles[i]);
-        RTVlist[i] = rtvHandles[i];
-        SRVlist[i] = srvHandles[i];
+        std::wstring wstr = std::to_wstring(this->NumTextures);
+        LPCWSTR ptr = wstr.c_str();
+        OutputDebugString(ptr);
+
+        RTVlist.push_back(rtvHandles[i]);
+        SRVlist.push_back(srvHandles[i]);
     }
 }
 

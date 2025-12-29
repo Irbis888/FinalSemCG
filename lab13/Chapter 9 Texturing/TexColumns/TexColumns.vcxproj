@@ -168,9 +168,6 @@
     <ClCompile Include="..\..\Common\model.cpp" />
     <ClCompile Include="CustomBuffer.cpp" />
     <ClCompile Include="FrameResource.cpp" />
-    <ClCompile Include="GBuffer.cpp" />
-    <ClCompile Include="HistoryBuffer.cpp" />
-    <ClCompile Include="RenderingSystem.cpp" />
     <ClCompile Include="TexColumnsApp.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -185,9 +182,6 @@
     <ClInclude Include="..\..\Common\UploadBuffer.h" />
     <ClInclude Include="CustomBuffer.h" />
     <ClInclude Include="FrameResource.h" />
-    <ClInclude Include="GBuffer.h" />
-    <ClInclude Include="HistoryBuffer.h" />
-    <ClInclude Include="RenderingSystem.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="Shaders\Default.hlsl">

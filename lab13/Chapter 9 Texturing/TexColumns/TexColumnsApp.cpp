@@ -8,10 +8,7 @@
 #include "../../Common/GeometryGenerator.h"
 #include <filesystem>
 #include "FrameResource.h"
-#include "RenderingSystem.h"
-#include "GBuffer.h"
 #include "CustomBuffer.h"
-#include "HistoryBuffer.h"
 #include <iostream>
 
 
@@ -26,46 +23,34 @@ using namespace DirectX::PackedVector;
 
 const int gNumFrameResources = 3;
 
-
-
-/*struct RenderItem
+struct RenderItem
 {
 	RenderItem() = default;
 	RenderItem(const RenderItem& rhs) = delete;
 
-	// World matrix of the shape that describes the object's local space
-	// relative to the world space, which defines the position, orientation,
-	// and scale of the object in the world.
-	XMFLOAT4X4 World = MathHelper::Identity4x4();
+	DirectX::XMFLOAT4X4 World = MathHelper::Identity4x4();
+	DirectX::XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
 
-	XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
-
-	// Dirty flag indicating the object data has changed and we need to update the constant buffer.
-	// Because we have an object cbuffer for each FrameResource, we have to apply the
-	// update to each FrameResource.  Thus, when we modify obect data we should set
-	// NumFramesDirty = gNumFrameResources so that each frame resource gets the update.
-	int NumFramesDirty = gNumFrameResources;
-
-	// Index into GPU constant buffer corresponding to the ObjectCB for this render item.
+	int NumFramesDirty = 3;
 	UINT ObjCBIndex = -1;
 
 	Material* Mat = nullptr;
 	MeshGeometry* Geo = nullptr;
 
-	// Primitive topology.
 	D3D12_PRIMITIVE_TOPOLOGY PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
-	// DrawIndexedInstanced parameters.
 	UINT IndexCount = 0;
 	UINT StartIndexLocation = 0;
 	int BaseVertexLocation = 0;
-	std::string Name;
-};*/
 
+	std::string Name;
+
+	DirectX::BoundingBox aabb;
+
+};
 
 // Lightweight structure stores parameters to draw a shape.  This will
 // vary from app-to-app.
-
 
 class TexColumnsApp : public D3DApp
 {
@@ -141,7 +126,7 @@ private:
 	FrameResource* mCurrFrameResource = nullptr;
 	int mCurrFrameResourceIndex = 0;
 
-	std::unique_ptr<RenderingSystem> mRenderingSystem;
+	//std::unique_ptr<RenderingSystem> mRenderingSystem;
 	//
 	std::unordered_map<std::string, int>TexOffsets;
 	//
@@ -166,9 +151,8 @@ private:
 
 	std::unique_ptr<MeshGeometry> mScreenQuadGeo = nullptr;
 	std::unordered_map<std::string, std::unique_ptr<CustomBuffer>> mBuffers;
-
-	GBuffer mGBuffer;
-	HistoryBuffer mHistoryBuffer;
+	std::unordered_map<std::string, std::vector<DXGI_FORMAT>> mBufferFormats;
+	bool HistoryARead = false;
 
 	BoundingFrustum frustum;
 	BoundingFrustum worldFrustum;
@@ -286,6 +270,19 @@ bool TexColumnsApp::Initialize()
 	mBuffers["gbuffer"] = std::make_unique<CustomBuffer>(4);
 	mBuffers["history"] = std::make_unique<CustomBuffer>(4);
 
+	mBufferFormats["gbuffer"] = { 
+		DXGI_FORMAT_R8G8B8A8_UNORM,
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R32G32B32A32_FLOAT,
+		DXGI_FORMAT_R8_UNORM
+	};
+	mBufferFormats["history"] = {
+		DXGI_FORMAT_R8G8B8A8_UNORM,
+		DXGI_FORMAT_R8G8B8A8_UNORM,
+		DXGI_FORMAT_R8G8B8A8_UNORM,
+		DXGI_FORMAT_R32G32_FLOAT
+	};
+
 
 	LoadAllTextures();
 	BuildRootSignature();
@@ -323,10 +320,6 @@ void TexColumnsApp::OnResize()
 	cam.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 5000.0f);
 
 	BoundingFrustum::CreateFromMatrix(mCamFrustum, cam.GetProj());
-
-
-
-
 }
 
 void TexColumnsApp::Update(const GameTimer& gt)
@@ -512,7 +505,7 @@ void TexColumnsApp::DrawDebugGBuffer(ID3D12GraphicsCommandList* cmdList)
     cmdList->IASetVertexBuffers(0, 1, &vbv);
 
     CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-    texHandle.Offset(mGBuffer.SrvHeapStartIndex, mCbvSrvDescriptorSize);
+    texHandle.Offset(mBuffers["gbuffer"]->SrvHeapStartIndex, mCbvSrvDescriptorSize);
 
     for (int i = 0; i < 4; ++i)
     {
@@ -540,24 +533,28 @@ void TexColumnsApp::GeometryPass()
 {
 	mCommandList->SetPipelineState(mPSOs["gbuffer"].Get()); // PSO для geometry pass
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-		mHistoryBuffer.Velocity.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+		mBuffers["history"]->Textures[3].Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
 	mWriteStencil = true;
 
 
 	// Переход RTV GBuffer в render target state
-	mGBuffer.TransitionToRenderTarget(mCommandList.Get());
+	mBuffers["gbuffer"]->TransitionState(mCommandList.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-	std::array<D3D12_CPU_DESCRIPTOR_HANDLE, GBuffer::NumTextures + 1> renderTargets = {
-		mGBuffer.AlbedoRTV, mGBuffer.NormalRTV, mGBuffer.WorldPosRTV, mGBuffer.RoughnessRTV, mHistoryBuffer.VelocityRTV
+	std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 5> renderTargets = {
+		mBuffers["gbuffer"]->RTVlist[0],
+		mBuffers["gbuffer"]->RTVlist[1],
+		mBuffers["gbuffer"]->RTVlist[2],
+		mBuffers["gbuffer"]->RTVlist[3],
+		mBuffers["history"]->RTVlist[3],
 	};
 
 	// Установка рендер-таргетов (GBuffer RTV + Depth)
-	mCommandList->OMSetRenderTargets(GBuffer::NumTextures+1, renderTargets.data(), FALSE, &DepthStencilView());
+	mCommandList->OMSetRenderTargets(5, renderTargets.data(), FALSE, &DepthStencilView());
 
 	// Очистка GBuffer и depth
 	//const float clearColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	mGBuffer.ClearRenderTargets(mCommandList.Get(), Colors::LightSteelBlue);
-	mCommandList->ClearRenderTargetView(mHistoryBuffer.VelocityRTV, Colors::Black, 0, nullptr);
+	mBuffers["gbuffer"]->ClearRenderTargets(mCommandList.Get(), Colors::LightSteelBlue);
+	mCommandList->ClearRenderTargetView(mBuffers["history"]->RTVlist[3], Colors::Black, 0, nullptr);
 	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
 	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
@@ -594,14 +591,14 @@ void TexColumnsApp::GeometryTerrainPass()
 void TexColumnsApp::LightingPass()
 {
 	// Переход GBuffer SRV и BackBuffer в RTV
-	mGBuffer.TransitionToShaderResource(mCommandList.Get());
+	mBuffers["gbuffer"]->TransitionState(mCommandList.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-		mHistoryBuffer.Current.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+		mBuffers["history"]->Textures[2].Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
-	mCommandList->OMSetRenderTargets(1, &mHistoryBuffer.CurrentRTV, TRUE, nullptr);
+	mCommandList->OMSetRenderTargets(1, &mBuffers["history"]->RTVlist[2], TRUE, nullptr);
 
 	// Очистка backbuffer (по желанию)
-	mCommandList->ClearRenderTargetView(mHistoryBuffer.CurrentRTV, Colors::DeepSkyBlue, 0, nullptr);
+	mCommandList->ClearRenderTargetView(mBuffers["history"]->RTVlist[2], Colors::DeepSkyBlue, 0, nullptr);
 
 	mCommandList->SetPipelineState(mPSOs["lighting"].Get());
 	mCommandList->SetGraphicsRootSignature(mLightingRootSignature.Get());
@@ -609,7 +606,7 @@ void TexColumnsApp::LightingPass()
 	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
 	mCommandList->SetDescriptorHeaps(1, descriptorHeaps);
 
-	auto srvTableHandle = mGBuffer.GetSRVTable(mSrvDescriptorHeap.Get(), mCbvSrvDescriptorSize);
+	auto srvTableHandle = mBuffers["gbuffer"]->GetSRVTable(mSrvDescriptorHeap.Get(), mCbvSrvDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(0, srvTableHandle);
 
 	// Передаём passCB
@@ -629,7 +626,7 @@ void TexColumnsApp::PostProcessPass()
 	mCommandList->SetGraphicsRootSignature(mGeometryRootSignature.Get());
 	mCommandList->SetPipelineState(mPSOs["transparent"].Get());
 	mWriteStencil = false;
-	mCommandList->OMSetRenderTargets(1, &mHistoryBuffer.CurrentRTV, TRUE, &DepthStencilView());
+	mCommandList->OMSetRenderTargets(1, &mBuffers["history"]->RTVlist[2], TRUE, &DepthStencilView());
 
 
 	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
@@ -647,33 +644,30 @@ void TexColumnsApp::PostProcessPass()
 void TexColumnsApp::ResolvePass()
 {
 	// Переход GBuffer SRV и BackBuffer в RTV
-	//mHistoryBuffer.TransitionToShaderResource(mCommandList.Get());
+	// mBuffers["history"]->RTVlist[2]TransitionToShaderResource(mCommandList.Get());
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
 		CurrentBackBuffer(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
 
-	if (mHistoryBuffer.HistoryARead) {
+	if (HistoryARead) {
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-			mHistoryBuffer.HistoryA.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+			mBuffers["history"]->Textures[0].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-			mHistoryBuffer.HistoryB.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+			mBuffers["history"]->Textures[1].Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
 	}
 	else {
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-			mHistoryBuffer.HistoryB.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+			mBuffers["history"]->Textures[1].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-			mHistoryBuffer.HistoryA.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+			mBuffers["history"]->Textures[0].Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
 	}
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-		mHistoryBuffer.Current.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+		mBuffers["history"]->Textures[2].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-		mHistoryBuffer.Velocity.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
-
-	/*std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 2> renderTargets = {CurrentBackBufferView(), mHistoryBuffer.HistoryARTV};
-	if (mHistoryBuffer.HistoryARead) { renderTargets[1] = mHistoryBuffer.HistoryBRTV; }*/
+		mBuffers["history"]->Textures[3].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
 
-	mCommandList->OMSetRenderTargets(1, mHistoryBuffer.HistoryARead ? &mHistoryBuffer.HistoryBRTV : &mHistoryBuffer.HistoryARTV, TRUE, nullptr);
+	mCommandList->OMSetRenderTargets(1, HistoryARead ? &mBuffers["history"]->RTVlist[1] : &mBuffers["history"]->RTVlist[0], TRUE, nullptr);
 
 	// Очистка backbuffer (по желанию)
 	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DeepSkyBlue, 0, nullptr);
@@ -686,18 +680,18 @@ void TexColumnsApp::ResolvePass()
 
 
 	CD3DX12_GPU_DESCRIPTOR_HANDLE historyHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	historyHandle.Offset((mHistoryBuffer.HistoryARead ? 4 : 5) + mHistoryBuffer.SrvHeapStartIndex, mCbvSrvDescriptorSize);
+	historyHandle.Offset((HistoryARead ? 0 : 1) + mBuffers["history"]->SrvHeapStartIndex, mCbvSrvDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(0, historyHandle);
 
 	CD3DX12_GPU_DESCRIPTOR_HANDLE currentHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	currentHandle.Offset(6+ mHistoryBuffer.SrvHeapStartIndex, mCbvSrvDescriptorSize);
+	currentHandle.Offset(2 + mBuffers["history"]->SrvHeapStartIndex, mCbvSrvDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(1, currentHandle);
 
 	CD3DX12_GPU_DESCRIPTOR_HANDLE velocityHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	velocityHandle.Offset(7 + mHistoryBuffer.SrvHeapStartIndex, mCbvSrvDescriptorSize);
+	velocityHandle.Offset(3 + mBuffers["history"]->SrvHeapStartIndex, mCbvSrvDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(2, velocityHandle);
 
-	mHistoryBuffer.HistoryARead = !mHistoryBuffer.HistoryARead;
+	HistoryARead = !HistoryARead;
 	// Рисуем полноэкранный треугольник
 	mCommandList->IASetVertexBuffers(0, 0, nullptr);
 	mCommandList->IASetIndexBuffer(nullptr);
@@ -1220,11 +1214,13 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	// 1. Создаём SRV хип с учётом GBuffer
 	//
 	UINT numTextureSRVs = static_cast<UINT>(mTextures.size());
-	UINT numGBufferSRVs = mBuffers["gbuffer"]->NumTextures; // albedo, normal, world pos, roughness
-	UINT numHistorySRVs = mBuffers["history"]->NumTextures; // history, current, velocity
+	UINT numCustomBufferSRVs = 0;
+	for (const auto& [name, buffer] : mBuffers) {
+		numCustomBufferSRVs += buffer->NumTextures;
+	}
 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = numTextureSRVs + numGBufferSRVs + numHistorySRVs;
+	srvHeapDesc.NumDescriptors = numTextureSRVs + numCustomBufferSRVs;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -1233,7 +1229,7 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	// 2. Создаём RTV хип под GBuffer
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-	rtvHeapDesc.NumDescriptors = numGBufferSRVs + numHistorySRVs;
+	rtvHeapDesc.NumDescriptors = numCustomBufferSRVs;
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&mRtvDescriptorHeap)));
@@ -1258,53 +1254,46 @@ void TexColumnsApp::BuildDescriptorHeaps()
 		offset++;
 	}
 
-	mGBuffer.SrvHeapStartIndex = offset;
-	//offset += numGBufferSRVs;
-	mHistoryBuffer.SrvHeapStartIndex = offset;
-	//offset += numHistorySRVs;
+	mBuffers["gbuffer"]->SrvHeapStartIndex = offset;
+	offset += mBuffers["gbuffer"]->NumTextures;
+	mBuffers["history"]->SrvHeapStartIndex = offset;
+	offset += mBuffers["history"]->NumTextures;
 
 	//
 	// 4. Создаём дескрипторы для GBuffer
 	//
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[4];
-	D3D12_CPU_DESCRIPTOR_HANDLE srvHandles[4];
+	std::unordered_map<std::string, std::vector<D3D12_CPU_DESCRIPTOR_HANDLE>> rtvHandles;
+	std::unordered_map<std::string, std::vector<D3D12_CPU_DESCRIPTOR_HANDLE>> srvHandles;
 
 	UINT rtvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	UINT srvDescriptorSize = mCbvSrvDescriptorSize;
 
 	// Получаем первый дескриптор из RTV и SRV хипов
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(mRtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
-	CD3DX12_CPU_DESCRIPTOR_HANDLE gbufferSrvHandle(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), offset, srvDescriptorSize);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE gbufferSrvHandle(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), offset-numCustomBufferSRVs, srvDescriptorSize);
 
-	D3D12_CPU_DESCRIPTOR_HANDLE histSrvHandles[4];
-	D3D12_CPU_DESCRIPTOR_HANDLE histRtvHandles[4];
-
-	
 
 	// Собираем массивы дескрипторов
-	for (int i = 0; i < 4; ++i) {
-		rtvHandles[i] = rtvHandle;
-		rtvHandle.Offset(1, rtvDescriptorSize);
 
-		srvHandles[i] = gbufferSrvHandle;
-		gbufferSrvHandle.Offset(1, srvDescriptorSize);
+	for (const auto& [name, buffer] : mBuffers) {
+		rtvHandles[name] = {};
+		srvHandles[name] = {};
+
+
+		for (int i = 0; i < buffer->NumTextures; i++) {
+			rtvHandles[name].push_back(rtvHandle);
+			rtvHandle.Offset(1, rtvDescriptorSize);
+
+			srvHandles[name].push_back(gbufferSrvHandle);
+			gbufferSrvHandle.Offset(1, srvDescriptorSize);
+		}
 	}
-
-	for (int i = 0; i < 4; ++i) {
-		histRtvHandles[i] = rtvHandle;
-		rtvHandle.Offset(1, rtvDescriptorSize);
-
-		histSrvHandles[i] = gbufferSrvHandle;
-		gbufferSrvHandle.Offset(1, srvDescriptorSize);
-	}
-
 	//
 	// 5. Инициализация GBuffer
 	//
-
-	mGBuffer.Initialize(md3dDevice.Get(), mClientWidth, mClientHeight, rtvHandles, srvHandles);
-	mHistoryBuffer.Initialize(md3dDevice.Get(), mClientWidth, mClientHeight, histRtvHandles, histSrvHandles);
-
+	for (const auto& [name, buffer] : mBuffers) {
+		buffer->Initialize(md3dDevice.Get(), mClientWidth, mClientHeight, mBufferFormats[name].data(), rtvHandles[name].data(), srvHandles[name].data());
+	}
 }
 void TexColumnsApp::BuildLODs()
 {
@@ -1907,7 +1896,7 @@ void TexColumnsApp::BuildPSOs()
 		mShaders["gbufferPS"]->GetBufferSize()
 	};
 
-	geoPsoDesc.NumRenderTargets = GBuffer::NumTextures+1;
+	geoPsoDesc.NumRenderTargets = 5;
 	geoPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;     // Albedo
 	geoPsoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT; // Normal
 	geoPsoDesc.RTVFormats[2] = DXGI_FORMAT_R32G32B32A32_FLOAT; // WorldPos

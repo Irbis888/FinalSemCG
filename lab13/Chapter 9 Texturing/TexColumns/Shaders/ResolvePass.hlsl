@@ -43,9 +43,51 @@ float4 AdjustHDRColor (float4 color)
 }
 
 
+static const float PI = 3.14159265359;
+static const float G = 9.81;
+float JONSWAP(float2 k, float omega_p)
+{
+    float k_len = length(k);
+
+    // защита от делени€ на 0
+    if (k_len < 1e-6)
+        return 0.0;
+
+    // дисперсионное соотношение (deep water)
+    float omega = sqrt(G * k_len);
+
+    // параметры JONSWAP
+    float alpha = 0.0081;
+    float gamma = 3.3;
+
+    // sigma зависит от того, меньше или больше пика
+    float sigma = (omega <= omega_p) ? 0.07 : 0.09;
+
+    // базовый PM-спектр
+    float pm =
+        alpha * G * G /
+        pow(omega, 5.0) *
+        exp(-1.25 * pow(omega_p / omega, 4.0));
+
+    // усиление пика
+    float exponent =
+        exp(-pow(omega - omega_p, 2.0) /
+            (2.0 * sigma * sigma * omega_p * omega_p));
+
+    float jonswap = pm * pow(gamma, exponent);
+    
+    float2 wind_dir = normalize(float2(0.5, 0.5));
+    float wind_exp = 3.5;
+    
+    float D = pow(max(dot(normalize(k), wind_dir), 0.0), wind_exp);
+    jonswap *= D;
+
+    return jonswap;
+}
+
+
 PSOutput PS(VertexOut pin)
 {
-    
     int x;
     int y;
     
@@ -54,18 +96,10 @@ PSOutput PS(VertexOut pin)
     float2 uv = pin.PosH.xy / size;
     PSOutput output;
 
-    // “екущий пиксель и истори€
     float4 currentColor = AdjustHDRColor(gCurrent.Load(int3(pin.PosH.xy, 0)));
-
-    // ЅерЄм смещение из velocity (в пиксел€х)
     float2 velocity = gVelocity.Load(int3(pin.PosH.xy, 0)).xy;
-    //gVelocity.
+    float2 historyUV = uv - velocity; 
 
-    // —мещаем координаты дл€ выборки из истории
-    //float2 historyUV = pin.PosH.xy + float2(velocity.x * 1600., velocity.y * 1080.)/2; // минус velocity, чтобы брать предыдущий кадр
-    float2 historyUV = uv - velocity; // минус velocity, чтобы брать предыдущий кадр
-
-    // ѕриводим к integer дл€ Load
     int2 historyPix = int2(historyUV);
 
     float4 historyColor = AdjustHDRColor(gHistory.Sample(gsamPointClamp, historyUV));
@@ -76,34 +110,29 @@ PSOutput PS(VertexOut pin)
         {
             for (int j = -1; j <= 1; j++)
             {
-                //float4 color = gCurrent.Sample(gsamPointClamp, uv + 3*float2(i, j) / size);
-            float4 color = AdjustHDRColor(gCurrent.Load(int3(pin.PosH.xy, 0) + int3(i, j, 0)));
+                float4 color = AdjustHDRColor(gCurrent.Load(int3(pin.PosH.xy, 0) + int3(i, j, 0)));
                 minColor = min(minColor, color);
                 maxColor = max(maxColor, color);
 
             }
         }
     float4 ClampedColor = clamp(historyColor, minColor, maxColor);
-    
     float weightHistory = 0.9 * historyColor.a;
     float weightCurr = 0.1 * currentColor.a;
 
-    
-    
-    
-    
-    
-    
     float4 blendedColor = ClampedColor * weightHistory + currentColor * weightCurr;
     blendedColor /= weightHistory + weightCurr;
-    //float4 blendedColor = ClampedColor * 0.9 + currentColor * 0.1;
     output.RT0 = blendedColor;
+    
+    float2 k = (2.0 * pin.TexC - 0.5) * 0.5;
+    float omega_p = 2.0 * PI / 8.0;
     
     if (!InverseLuminance)
     {
         output.RT0 = float4(exp(output.RT0.rgb), blendedColor.a);
+        //float s = sqrt(JONSWAP(k, omega_p)/2.0);
+        //output.RT0 = float4(s, s, 0.0, 1.0);
     }
-    //output.RT0 = float4(weightHistory, weightCurr, 0, 0);
     return output;
     
 }
