@@ -21,7 +21,7 @@ public:
     void Init(XMFLOAT3 position);
     void Update(float elapsedSeconds);
     XMMATRIX GetViewMatrix();
-    XMMATRIX GetProjectionMatrix(float fov, float aspectRatio, float nearPlane = 1.0f, float farPlane = 1000.0f);
+    XMMATRIX GetProjectionMatrix(float fov, float aspectRatio, float nearPlane = 1.0f, float farPlane = 1000000.0f);
     void SetMoveSpeed(float unitsPerSecond);
     void SetTurnSpeed(float radiansPerSecond);
 
@@ -37,11 +37,15 @@ private:
         bool a;
         bool s;
         bool d;
+        bool e;
+        bool q;
 
         bool left;
         bool right;
         bool up;
         bool down;
+        bool top;
+        bool bottom;
     };
 
     XMFLOAT3 m_initialPosition;
