@@ -1488,7 +1488,7 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 
 	UINT totalMeshSize = 0;
 	UINT k = vertices.size();
-	std::vector<std::pair<GeometryGenerator::MeshData, SubmeshGeometry>>meshSubmeshes;
+	std::vector<std::pair<GeometryGenerator::MeshData, SubmeshGeometry>> meshSubmeshes;
 	
 	for (auto mesh : meshDatas)
 	{

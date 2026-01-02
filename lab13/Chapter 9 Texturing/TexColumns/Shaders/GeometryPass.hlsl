@@ -89,16 +89,9 @@ VertexOut VS(VertexIn vin)
     vout.TexC = mul(texC, gMatTransform).xy;
     
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
-    float height = gDiffuseMap.SampleLevel(gsamAnisotropicWrap, vout.TexC, 0).r;
-    
-
     vout.PosW = posW;
-
-    vout.PosH = mul(posW, gViewProj);
-    
-
+    vout.PosH = mul(posW, gViewProj);   
     vout.NormalW = mul(vin.NormalL, (float3x3) gWorld);
-    //vout.NormalW = float3(0., 1., 0.);
     
     vout.TangentW = mul(vin.TangentL, (float3x3) gWorld);
 
